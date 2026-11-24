@@ -13,7 +13,7 @@
 %global debug_package %{nil}
 
 Name:           hurutube
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        A small YouTube player: search, watch, and no Shorts
 
@@ -94,6 +94,16 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
+* Tue Nov 24 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.1-1
+- The headless commands (`--status`, `--history`, `--search … --no-window`) no
+  longer abort without a display. They constructed a QGuiApplication, which needs
+  a platform plugin and core-dumps when there is none, so the packaged
+  `hurutube --status` died in a container while working perfectly in a terminal
+  on the desktop -- a terminal there still has a session, which is what hid it.
+  The application class is now chosen from the arguments: the window needs
+  QGuiApplication, everything else only QCoreApplication.
+- `--history` prints and exits on its own, instead of silently doing nothing
+  unless it was paired with --no-window.
 * Tue Nov 24 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.0-1
 - First release: search through YouTube's inner API (sub-second, and Shorts are
   never read into the list because they arrive in their own renderer), channel
