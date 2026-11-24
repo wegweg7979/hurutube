@@ -94,7 +94,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
-* Mon Nov 24 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.0-1
+* Tue Nov 24 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.0-1
 - First release: search through YouTube's inner API (sub-second, and Shorts are
   never read into the list because they arrive in their own renderer), channel
   and playlist listings through yt-dlp, and playback through mpv with VA-API
