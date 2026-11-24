@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#f7768e"/>
+  <!-- A play triangle, and nothing else: this app plays a video and refuses one
+       shape of it (Shorts), which is not something an icon can draw. Same shape
+       of icon as huruwave's and airgraph's (rounded square, dark glyph on one
+       accent colour) so the three read as a set in a launcher; this one takes
+       the red from the Omarchy palette rather than a second blue. -->
+  <path d="M25 19.5 L45 32 L25 44.5 Z" fill="#16161e"/>
+</svg>

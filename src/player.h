@@ -1,0 +1,176 @@
+#pragma once
+
+#include <QHash>
+#include <QJsonObject>
+#include <QLocalSocket>
+#include <QObject>
+#include <QProcess>
+#include <QString>
+#include <QTimer>
+
+// Video playback, driven through mpv's JSON IPC socket.
+//
+// mpv is the engine on purpose: it resolves YouTube URLs through yt-dlp itself,
+// it decodes through VA-API, and Qt Multimedia could do neither without a lot of
+// glue (and linking libav). VIDEO lives in mpv's own window, not inside this app:
+// embedding libmpv would mean linking mpv-libs and sharing the Qt Quick scene
+// graph's GL context, for a window the user watches full screen anyway.
+//
+// THE FAST PATH is pre-resolution. Measured on studiobox2: letting mpv resolve a
+// URL itself took 17.5 s to first frame, because that is yt-dlp extracting
+// formats inside the playback path. Resolving the same URL ahead of time with
+// `yt-dlp -g` and handing mpv the two direct URLs through loadfile's per-file
+// options reached a picture in 0.9 s (yt-dlp itself still costs ~12 s, but it
+// runs while the user is still reading the list). Note which form works: setting
+// the `audio-file` property BEFORE loadfile attaches NO audio at all; the option
+// only takes effect as part of the loadfile call.
+//
+// A pre-resolved URL is a googlevideo URL that expires (hours, per IP). If one
+// dies mid-flight, the entry is dropped from the cache and the same video is
+// retried once through the plain YouTube URL, which is slow but always correct.
+class Player : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool playing READ playing NOTIFY stateChanged)
+    Q_PROPERTY(bool paused READ paused NOTIFY stateChanged)
+    Q_PROPERTY(double position READ position NOTIFY positionChanged)
+    Q_PROPERTY(double duration READ duration NOTIFY durationChanged)
+    Q_PROPERTY(int volume READ volume WRITE setVolume NOTIFY volumeChanged)
+    Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaTitleChanged)
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    // What the engine is really decoding with: "vaapi" is hardware, anything
+    // else is software, and the window says so rather than assuming.
+    Q_PROPERTY(QString hwdec READ hwdec NOTIFY hwdecChanged)
+    Q_PROPERTY(QString videoDescription READ videoDescription NOTIFY videoChanged)
+    Q_PROPERTY(bool audioOnly READ audioOnly WRITE setAudioOnly NOTIFY audioOnlyChanged)
+    Q_PROPERTY(bool ready READ ready NOTIFY stateChanged)
+
+public:
+    explicit Player(QObject *parent = nullptr, const QString &mpvBinary = {},
+                    const QString &socketPath = {});
+    ~Player() override;
+
+    bool playing() const { return m_playing; }
+    bool paused() const { return m_paused; }
+    double position() const { return m_position; }
+    double duration() const { return m_duration; }
+    int volume() const { return m_volume; }
+    QString mediaTitle() const { return m_mediaTitle; }
+    QString lastError() const { return m_lastError; }
+    QString hwdec() const { return m_hwdec; }
+    QString videoDescription() const { return m_videoDescription; }
+    bool audioOnly() const { return m_audioOnly; }
+    bool ready() const { return m_ready; }
+
+    void setVolume(int volume);
+    Q_INVOKABLE void setVolumeFromQml(int volume) { setVolume(volume); }
+
+    void setCookieSource(const QString &cookiesFile, const QString &cookiesFromBrowser);
+    Q_INVOKABLE void setCookieSourceQml(const QString &cookiesFile, const QString &cookiesFromBrowser)
+    {
+        setCookieSource(cookiesFile, cookiesFromBrowser);
+    }
+
+    // `title` becomes mpv's window title, which for a direct stream URL would
+    // otherwise be a googlevideo URL.
+    Q_INVOKABLE void play(const QString &url, double startSeconds, const QString &title);
+    // Resolve in the background so the slow half overlaps the browsing. Safe to
+    // call on every selection change: an in-flight resolve for another URL is
+    // abandoned.
+    Q_INVOKABLE void presolve(const QString &url);
+    // Forget a cached resolve (the row is gone, or playback of it failed).
+    Q_INVOKABLE void forget(const QString &url);
+
+    Q_INVOKABLE void togglePause();
+    Q_INVOKABLE void pause();
+    Q_INVOKABLE void resume();
+    Q_INVOKABLE void stop();
+    Q_INVOKABLE void seekAbsolute(double seconds);
+    Q_INVOKABLE void seekRelative(double seconds);
+    Q_INVOKABLE void toggleFullscreen();
+    void setAudioOnly(bool audioOnly);
+
+signals:
+    void stateChanged();
+    void positionChanged();
+    void durationChanged();
+    void volumeChanged();
+    void mediaTitleChanged();
+    void lastErrorChanged();
+    void hwdecChanged();
+    void videoChanged();
+    void audioOnlyChanged();
+    // Playback of the current entry ran to its end (reason=eof), which is what
+    // advances the list.
+    void finished();
+    // The engine exited because the user closed its window. `wasPlaying` says
+    // whether that interrupted a video or just ended one, and the position and
+    // duration ride along because this is the last moment they are known.
+    void engineClosed(bool wasPlaying, double position, double duration);
+    void started();
+    // The background resolve finished: `ok` says whether a fast start is ready.
+    void resolved(const QString &url, bool ok);
+
+private:
+    struct Resolved {
+        QString video;
+        QString audio;
+        qint64 stamp = 0;
+    };
+
+    void startEngine();
+    void send(const QJsonArray &command, bool withRequestId = true);
+    void flushPending();
+    void handleLine(const QByteArray &line);
+    void handleProperty(int id, const QJsonValue &value);
+    void setError(const QString &message);
+    void observe(int id, const QString &property);
+    void connectSocket();
+    void handleEngineExit(int code, QProcess::ExitStatus status);
+    void updateVideoDescription();
+    void stopStaleEngines();
+    QString formatSelector() const;
+    void replayWithoutCache(const QString &url, double start, const QString &title);
+
+    QString m_mpv;
+    QString m_socketPath;
+    QString m_cookiesFile;
+    QString m_cookiesFromBrowser;
+    QProcess m_process;
+    QLocalSocket m_socket;
+    QByteArray m_buffer;
+    // Commands issued before the socket is up (a URL passed on the command line
+    // is played immediately, long before mpv has finished starting) are queued
+    // here instead of being written into a closed device and lost.
+    QList<QByteArray> m_pending;
+    QTimer m_reconnect;
+    int m_nextRequestId = 100;
+    bool m_observed = false;
+    bool m_ready = false;
+    bool m_shuttingDown = false;
+    QByteArray m_engineError;
+
+    QProcess m_resolve;
+    QByteArray m_resolveOutput;
+    QString m_resolving;
+    QHash<QString, Resolved> m_cache;
+    // The entry currently loaded, so a failed direct URL can be retried the slow
+    // way exactly once.
+    QString m_currentUrl;
+    QString m_currentTitle;
+    double m_currentStart = 0;
+    bool m_retried = false;
+
+    bool m_playing = false;
+    bool m_paused = false;
+    bool m_audioOnly = false;
+    double m_position = 0;
+    double m_duration = 0;
+    int m_volume = 100;
+    QString m_mediaTitle;
+    QString m_lastError;
+    QString m_hwdec;
+    QString m_videoDescription;
+    QString m_videoFormat;
+    int m_videoWidth = 0;
+    int m_videoHeight = 0;
+};

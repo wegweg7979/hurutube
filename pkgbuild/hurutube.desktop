@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=hurutube
+Comment=A small YouTube player: search, watch, and no Shorts
+Exec=hurutube
+Icon=hurutube
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupWMClass=hurutube
