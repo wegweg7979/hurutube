@@ -19,6 +19,7 @@
 
 #include <csignal>
 #include <functional>
+#include <memory>
 
 #include "config.h"
 #include "history.h"
@@ -27,6 +28,27 @@
 #include "theme.h"
 
 namespace {
+
+// Which application class the run needs.
+//
+// A GUI application needs a platform plugin, and with no display it ABORTS
+// before main() can print anything -- including for the headless commands. That
+// was not theoretical: the packaged `hurutube --status` core-dumped in a
+// container (no WAYLAND_DISPLAY, no X) while working perfectly in a terminal on
+// the desktop, because a terminal there still has a session. The window needs
+// QGuiApplication; everything else needs only QCoreApplication, so the class is
+// chosen from the arguments before anything is constructed.
+bool needsGui(int argc, char *argv[])
+{
+    for (int i = 1; i < argc; ++i) {
+        const QLatin1String argument(argv[i]);
+        if (argument == QLatin1String("--no-window") || argument == QLatin1String("--status")
+            || argument == QLatin1String("--history") || argument == QLatin1String("--help")
+            || argument == QLatin1String("-h") || argument == QLatin1String("--version"))
+            return false;
+    }
+    return true;
+}
 
 // A SIGTERM (a session shutdown, or a script stopping the app) otherwise ends
 // the process without running a single destructor, so the playback engine
@@ -176,16 +198,23 @@ int printStatus(const QString &mpv, const QString &ytdlp)
 
 int main(int argc, char *argv[])
 {
-    QGuiApplication app(argc, argv);
+    const bool gui = needsGui(argc, argv);
+    std::unique_ptr<QCoreApplication> application(
+        gui ? static_cast<QCoreApplication *>(new QGuiApplication(argc, argv))
+            : static_cast<QCoreApplication *>(new QCoreApplication(argc, argv)));
+    QCoreApplication &app = *application;
     app.setApplicationName(QStringLiteral("hurutube"));
     std::signal(SIGTERM, requestQuit);
     std::signal(SIGINT, requestQuit);
-    app.setApplicationDisplayName(QStringLiteral("hurutube"));
     app.setOrganizationName(QStringLiteral("hurunagus"));
-    // Ties the Wayland app_id to hurutube.desktop so the compositor and the
-    // launcher find the right icon and window rules.
-    app.setDesktopFileName(QStringLiteral("hurutube"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("hurutube")));
+    // The GUI-only bits: a display name, the Wayland app_id that ties this window
+    // to hurutube.desktop, and the themed icon. All three need a QGuiApplication,
+    // which a headless run deliberately does not have.
+    if (auto *gui = qobject_cast<QGuiApplication *>(&app)) {
+        gui->setApplicationDisplayName(QStringLiteral("hurutube"));
+        gui->setDesktopFileName(QStringLiteral("hurutube"));
+        gui->setWindowIcon(QIcon::fromTheme(QStringLiteral("hurutube")));
+    }
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
@@ -217,7 +246,10 @@ int main(int argc, char *argv[])
         return printStatus(QStringLiteral("mpv"), QStringLiteral("yt-dlp"));
 
     History history;
-    if (parser.isSet(historyOption) && parser.isSet(noWindowOption)) {
+    // `--history` prints and exits whether or not --no-window is given: a flag
+    // that silently does nothing when the window opens is worse than one that
+    // does what it says.
+    if (parser.isSet(historyOption)) {
         printHistory(history, parser.isSet(jsonOption));
         return 0;
     }

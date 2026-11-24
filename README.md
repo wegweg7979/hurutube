@@ -18,7 +18,7 @@ bin/test         # the Qt Test binary, offscreen
 ./build/hurutube @LinusTechTips                      # list a channel's videos
 ./build/hurutube --audio-only "lofi hip hop"         # no video window
 ./build/hurutube --search "kdenlive" --no-window --json   # headless, for scripts
-./build/hurutube --history --no-window               # what was watched, with positions
+./build/hurutube --history                            # what was watched, with positions
 ./build/hurutube --status                            # mpv, yt-dlp, the VA-API profiles here
 ```
 
