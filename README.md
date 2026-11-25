@@ -4,22 +4,6 @@ A small YouTube player: search, watch, and no Shorts. The video plays in mpv wit
 GPU decode (VA-API).
 
 
-## Running it
-
-```bash
-bin/build        # cmake + make into build/hurutube
-bin/test         # the Qt Test binary, offscreen
-./build/hurutube # the player
-
-./build/hurutube "kdenlive tutorial"                 # open with results
-./build/hurutube https://youtu.be/aqz-KE-bpKQ        # play a link straight away
-./build/hurutube @LinusTechTips                      # list a channel's videos
-./build/hurutube --audio-only "lofi hip hop"         # no video window
-./build/hurutube --search "kdenlive" --no-window --json   # headless, for scripts
-./build/hurutube --history                            # what was watched, with positions
-./build/hurutube --status                            # mpv, yt-dlp, the VA-API profiles here
-```
-
 On Hurunagus it comes from its own COPR (`wegweg7979/hurutube`), so there is
 nothing to build there.
 
