@@ -63,6 +63,8 @@ Rectangle {
                         parts.push(player.videoDescription)
                     if (player.audioOnly)
                         parts.push(qsTr("audio only"))
+                    if (player.usedCookies)
+                        parts.push(qsTr("needed cookies"))
                     return parts.join(" · ")
                 }
                 color: theme.muted

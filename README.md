@@ -68,9 +68,25 @@ position is remembered, so playing it again resumes.
   inside the playback path.
 - **What is remembered** is one JSON file, `~/.local/state/hurutube/history.json`,
   written atomically, capped, and holding a position only when resuming makes
-  sense (not for two seconds in, not for a video watched to the end). Settings —
-  just `cookies_file` / `cookies_from` — are read from
-  `~/.config/hurutube/config.toml`; cookies matter only for restricted videos.
+  sense (not for two seconds in, not for a video watched to the end).
+- **Which YouTube session is used** is resolved at startup, in this order: an
+  explicit `cookies_file`, then `cookies_from`, in `~/.config/hurutube/config.toml`
+  (both honoured as written) → a cookies file at
+  `~/.cache/hurutube/cookies.txt`, **but only if it really carries a session** →
+  Firefox (a plain sqlite file, no keyring to fail) → that same file even without
+  a session → another player's `cookies_from` (huruwave, then cliamp). The window
+  says which one it is and what it can do — "signed in — cookie file, 24 cookies,
+  6 of them a session" versus "no cookies — anonymous search only" — because a
+  cookies file that exists is not the same thing as a session.
+- **Cookies are a fallback, never the default.** yt-dlp is always tried
+  anonymously first, and the cookies are used only when that attempt fails
+  (age-gated or members-only videos). Signing in is what makes YouTube hand these
+  clients **an empty format list** — measured on studiobox2: 37–44 formats
+  anonymously against **0** with the browser's session, on every video tried and
+  every player client — so cookies-by-default would play nothing at all, and the
+  footer says "needed cookies" when the fallback is what worked. mpv's own
+  yt-dlp call gets no cookies for the same reason: a fallback that cannot play is
+  worse than an anonymous one that can.
 
 Requires `mpv`, `yt-dlp` and Qt 6 (qt6-qtdeclarative); a JS runtime for yt-dlp is
 recommended, since extraction degrades without one.

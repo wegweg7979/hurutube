@@ -41,6 +41,11 @@ class Player : public QObject {
     // else is software, and the window says so rather than assuming.
     Q_PROPERTY(QString hwdec READ hwdec NOTIFY hwdecChanged)
     Q_PROPERTY(QString videoDescription READ videoDescription NOTIFY videoChanged)
+    // True when this video needed the cookies to resolve -- an anonymous attempt
+    // had already failed. Reported because "it only played signed in" is worth
+    // knowing, and because claiming it from the configuration rather than from
+    // what happened would be a guess.
+    Q_PROPERTY(bool usedCookies READ usedCookies NOTIFY usedCookiesChanged)
     Q_PROPERTY(bool audioOnly READ audioOnly WRITE setAudioOnly NOTIFY audioOnlyChanged)
     Q_PROPERTY(bool ready READ ready NOTIFY stateChanged)
 
@@ -58,6 +63,7 @@ public:
     QString lastError() const { return m_lastError; }
     QString hwdec() const { return m_hwdec; }
     QString videoDescription() const { return m_videoDescription; }
+    bool usedCookies() const { return m_usedCookies; }
     bool audioOnly() const { return m_audioOnly; }
     bool ready() const { return m_ready; }
 
@@ -98,6 +104,7 @@ signals:
     void lastErrorChanged();
     void hwdecChanged();
     void videoChanged();
+    void usedCookiesChanged();
     void audioOnlyChanged();
     // Playback of the current entry ran to its end (reason=eof), which is what
     // advances the list.
@@ -115,6 +122,9 @@ private:
         QString video;
         QString audio;
         qint64 stamp = 0;
+        // Whether the cookies were needed to get this URL. Cached with the URL
+        // because it belongs to the resolve, not to the moment of playback.
+        bool cookies = false;
     };
 
     void startEngine();
@@ -130,6 +140,18 @@ private:
     void stopStaleEngines();
     QString formatSelector() const;
     void replayWithoutCache(const QString &url, double start, const QString &title);
+
+    // yt-dlp's arguments for ONE resolve attempt. Anonymous goes first and the
+    // cookies are a fallback, never the default: a signed-in session is what
+    // makes YouTube hand the clients yt-dlp uses an empty format list (measured
+    // on this machine: 37 formats anonymously against 0 signed in, on every
+    // video tried), so cookies-as-default plays nothing at all.
+    QStringList resolveArguments(const QString &url, bool withCookies) const;
+    bool hasCookieSource() const
+    {
+        return !m_cookiesFile.isEmpty() || !m_cookiesFromBrowser.isEmpty();
+    }
+    void setUsedCookies(bool used);
 
     QString m_mpv;
     QString m_socketPath;
@@ -159,6 +181,9 @@ private:
     QString m_currentTitle;
     double m_currentStart = 0;
     bool m_retried = false;
+    // Set for the second resolve attempt of one URL: it is what tells a
+    // cookie-only video apart from one that came back anonymously.
+    bool m_cookieRetryTried = false;
 
     bool m_playing = false;
     bool m_paused = false;
@@ -169,6 +194,7 @@ private:
     QString m_mediaTitle;
     QString m_lastError;
     QString m_hwdec;
+    bool m_usedCookies = false;
     QString m_videoDescription;
     QString m_videoFormat;
     int m_videoWidth = 0;

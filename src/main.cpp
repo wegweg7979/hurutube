@@ -22,6 +22,7 @@
 #include <memory>
 
 #include "config.h"
+#include "cookies.h"
 #include "history.h"
 #include "player.h"
 #include "search.h"
@@ -166,6 +167,14 @@ int printStatus(const QString &mpv, const QString &ytdlp)
                         << "yt-dlp:     " << firstLine(ytdlp, {QStringLiteral("--version")}) << Qt::endl
                         << "render:     " << renderNode << Qt::endl;
 
+    // Which YouTube session the app would actually use. Printed because it is the
+    // one setting that decides whether age-gated and members-only videos work --
+    // and because "something was found" and "it is a session" are different
+    // answers, which is the whole point of describing it from the file's contents.
+    QString cookieKind;
+    const QString cookieSource = Cookies::resolve(&cookieKind);
+    QTextStream(stdout) << "cookies:    " << Cookies::describe(cookieSource, cookieKind) << Qt::endl;
+
     // The VA-API profiles that decide whether the streams YouTube serves can be
     // decoded on the GPU instead of the CPU.
     QProcess vainfo;
@@ -258,13 +267,20 @@ int main(int argc, char *argv[])
     Search youtube;
     Player player;
 
-    // One cookie source, given to both: the inner API does not need cookies, but
-    // yt-dlp does for restricted videos, and mpv resolves through yt-dlp when it
-    // has to. Configured in ~/.config/hurutube/config.toml.
-    const QString cookiesFrom = Config::read(QStringLiteral("cookies_from"));
-    const QString cookiesFile = Config::read(QStringLiteral("cookies_file"));
-    youtube.setCookies(cookiesFile, cookiesFrom);
-    player.setCookieSource(cookiesFile, cookiesFrom);
+    // One cookie source, given to both engines: the inner API needs no cookies,
+    // but yt-dlp does for restricted videos, and mpv resolves through yt-dlp when
+    // it has to. Resolved rather than merely configured -- an explicit setting
+    // wins, then a cookies file that really carries a session, then Firefox, then
+    // another player's setting (cookies.h holds the order and the reasons). With
+    // nothing found the app is an anonymous client, which is a working state and
+    // not a failure: the window says which one it is instead of implying either.
+    QString cookieKind;
+    const QString cookieSource = Cookies::resolve(&cookieKind);
+    const bool cookieIsFile = cookieKind == QStringLiteral("file");
+    youtube.setCookies(cookieIsFile ? cookieSource : QString(),
+                       cookieIsFile ? QString() : cookieSource);
+    player.setCookieSource(cookieIsFile ? cookieSource : QString(),
+                           cookieIsFile ? QString() : cookieSource);
 
     const QString query = parser.value(searchOption).trimmed();
     const bool asJson = parser.isSet(jsonOption);
@@ -294,6 +310,11 @@ int main(int argc, char *argv[])
                                              argumentIsSearch ? QString() : argument);
     engine.rootContext()->setContextProperty(QStringLiteral("startAudioOnly"),
                                              parser.isSet(audioOnlyOption));
+    // What the cookie source can actually do, for the status line. A string, not a
+    // live object: the config is read-only and the source cannot change while the
+    // app runs, so there is nothing to notify about.
+    engine.rootContext()->setContextProperty(QStringLiteral("cookieStatus"),
+                                             Cookies::describe(cookieSource, cookieKind));
 
     // Loaded through the QML module, not by a qrc:/ URL: the module's files are
     // compiled at build time, which keeps a stale per-user QML cache from serving

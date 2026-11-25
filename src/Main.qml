@@ -242,6 +242,20 @@ ApplicationWindow {
                 font.pixelSize: 12
                 elide: Text.ElideRight
             }
+
+            // Which YouTube session this is, said plainly. Muted only when it is a
+            // real session, yellow otherwise: an app that cannot tell "signed in"
+            // from "found a cookies file" is how you end up debugging the wrong
+            // thing, so the words come from what is inside the source.
+            Text {
+                visible: cookieStatus.length > 0
+                text: cookieStatus
+                color: cookieStatus.indexOf(qsTr("signed in")) === 0 ? theme.muted : theme.yellow
+                font.pixelSize: 12
+                elide: Text.ElideMiddle
+                Layout.maximumWidth: Math.round(window.width * 0.42)
+                Layout.alignment: Qt.AlignVCenter
+            }
         }
 
         // The list and the message that replaces it share one slot: a hidden

@@ -117,6 +117,18 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
                 const QStringList lines = QString::fromUtf8(output).split(QLatin1Char('\n'),
                                                                          Qt::SkipEmptyParts);
                 if (status != QProcess::NormalExit || code != 0 || lines.isEmpty()) {
+                    // One retry, WITH the cookies, and only after an anonymous
+                    // attempt has failed: this is the shape an age-gated or
+                    // members-only video fails in. It cannot be the other way
+                    // round -- signing in is also what makes YouTube serve no
+                    // formats at all to the clients yt-dlp uses, so cookies as
+                    // the default would play nothing (resolveArguments()).
+                    if (!m_cookieRetryTried && hasCookieSource()) {
+                        m_cookieRetryTried = true;
+                        m_resolving = url;
+                        m_resolve.start(QStringLiteral("yt-dlp"), resolveArguments(url, true));
+                        return;
+                    }
                     emit resolved(url, false);
                     return;
                 }
@@ -126,6 +138,7 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
                 // its own audio, so there is nothing to attach.
                 entry.audio = lines.size() > 1 ? lines.at(1).trimmed() : QString();
                 entry.stamp = QDateTime::currentSecsSinceEpoch();
+                entry.cookies = m_cookieRetryTried;
                 if (entry.video.isEmpty()) {
                     emit resolved(url, false);
                     return;
@@ -230,16 +243,14 @@ void Player::startEngine()
     if (!videoOutput.isEmpty())
         args << QStringLiteral("--vo=%1").arg(QString::fromLocal8Bit(videoOutput));
 
-    // yt-dlp options are split by commas, so a value containing one cannot be
-    // passed -- which is fine: paths and browser specs never contain commas.
-    QStringList ytdl;
-    if (!m_cookiesFile.isEmpty())
-        ytdl << QStringLiteral("cookies=%1").arg(m_cookiesFile);
-    if (!m_cookiesFromBrowser.isEmpty())
-        ytdl << QStringLiteral("cookies-from-browser=%1").arg(m_cookiesFromBrowser);
+    // mpv's own yt-dlp call is the last resort -- this app resolves URLs itself
+    // and hands mpv a direct stream -- so it deliberately carries NO cookies. A
+    // signed-in session is exactly what makes YouTube serve no formats at all to
+    // these clients, and a fallback that cannot play is worse than an anonymous
+    // one that can. Cookies reach a video through the app's own resolve, after an
+    // anonymous attempt has failed, and then mpv gets a direct URL anyway.
     // Without a JS runtime YouTube extraction degrades to images only.
-    ytdl << QStringLiteral("js-runtimes=node");
-    args << QStringLiteral("--ytdl-raw-options=%1").arg(ytdl.join(QLatin1Char(',')));
+    args << QStringLiteral("--ytdl-raw-options=%1").arg(QStringLiteral("js-runtimes=node"));
 
     m_process.start(m_mpv, args);
     if (!m_process.waitForStarted(3000)) {
@@ -396,14 +407,31 @@ void Player::presolve(const QString &url)
     }
     m_resolveOutput.clear();
     m_resolving = url;
+    // Anonymous first, always: see resolveArguments().
+    m_cookieRetryTried = false;
+    m_resolve.start(QStringLiteral("yt-dlp"), resolveArguments(url, false));
+}
+
+QStringList Player::resolveArguments(const QString &url, bool withCookies) const
+{
     QStringList arguments{QStringLiteral("-g"), QStringLiteral("--no-warnings"),
                           QStringLiteral("-f"), formatSelector()};
-    if (!m_cookiesFile.isEmpty())
-        arguments << QStringLiteral("--cookies") << m_cookiesFile;
-    if (!m_cookiesFromBrowser.isEmpty())
-        arguments << QStringLiteral("--cookies-from-browser") << m_cookiesFromBrowser;
+    if (withCookies) {
+        if (!m_cookiesFile.isEmpty())
+            arguments << QStringLiteral("--cookies") << m_cookiesFile;
+        if (!m_cookiesFromBrowser.isEmpty())
+            arguments << QStringLiteral("--cookies-from-browser") << m_cookiesFromBrowser;
+    }
     arguments << url;
-    m_resolve.start(QStringLiteral("yt-dlp"), arguments);
+    return arguments;
+}
+
+void Player::setUsedCookies(bool used)
+{
+    if (used == m_usedCookies)
+        return;
+    m_usedCookies = used;
+    emit usedCookiesChanged();
 }
 
 void Player::forget(const QString &url)
@@ -445,6 +473,8 @@ void Player::play(const QString &url, double startSeconds, const QString &title)
         if (!cached->audio.isEmpty())
             options.insert(QStringLiteral("audio-file"), cached->audio);
     }
+    // From what actually happened, not from what is configured.
+    setUsedCookies(usable && cached->cookies);
     m_mediaTitle = m_currentTitle;
     // `replace` so the new entry starts immediately instead of being appended to
     // an idle playlist; the app's own list is the source of order.

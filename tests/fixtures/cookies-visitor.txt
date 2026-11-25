@@ -1,0 +1,6 @@
+# Netscape HTTP Cookie File
+# A cookies file that carries NO session: the shape an export has when the
+# browser was never signed in. Values here are placeholders, never real cookies.
+.youtube.com	TRUE	/	TRUE	1799999999	CONSENT	YES+cb
+.youtube.com	TRUE	/	TRUE	1799999999	VISITOR_INFO1_LIVE	placeholder-visitor-cookie
+.youtube.com	TRUE	/	FALSE	1799999999	PREF	f6=40000000

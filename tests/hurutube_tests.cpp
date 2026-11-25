@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -9,6 +10,7 @@
 
 #include <functional>
 
+#include "cookies.h"
 #include "history.h"
 #include "search.h"
 
@@ -29,14 +31,40 @@ private slots:
     void historyResumeRule();
     void historySurvivesAWriteAndRead();
     void historyDropsEntriesItCannotUse();
+    void cookiesAreCountedByName();
+    void cookiesDescribeTellsTheTruth();
+    void cookiesLadderHonoursExplicitConfig();
+    void cookiesLadderDoesNotLetAVisitorFileShadowFirefox();
+    void cookiesLadderInheritsAndEndsEmpty();
 
 private:
     static QByteArray fixture(const QString &name)
     {
-        QFile file(QStringLiteral(HURUTUBE_FIXTURE_DIR "/") + name);
+        QFile file(fixturePath(name));
         if (!file.open(QIODevice::ReadOnly))
             return {};
         return file.readAll();
+    }
+
+    static QString fixturePath(const QString &name)
+    {
+        return QStringLiteral(HURUTUBE_FIXTURE_DIR "/") + name;
+    }
+
+    // A home directory the ladder can be driven against: every path it looks at
+    // is relative to the home it is given, so the order can be exercised without
+    // going near the real one.
+    static void writeFile(const QString &path, const QString &contents)
+    {
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            file.write(contents.toUtf8());
+    }
+
+    static void copyFixture(const QString &name, const QString &destination)
+    {
+        writeFile(destination, QString::fromUtf8(fixture(name)));
     }
 };
 
@@ -267,6 +295,116 @@ void HurutubeTests::historyDropsEntriesItCannotUse()
     // than a reason to refuse to start.
     QCOMPARE(History::parse(QByteArray("not json")).size(), 0);
     QVERIFY(History::serialize(entries).contains("aqz-KE-bpKQ"));
+}
+
+void HurutubeTests::cookiesAreCountedByName()
+{
+    // Both counts come from inside the file, and the `#HttpOnly_` rows are the
+    // whole point: those are the real session cookies, so a reader that skips
+    // every `#` line sees a signed-in export as an empty file.
+    int cookies = 0;
+    int sessions = 0;
+    Cookies::count(fixturePath(QStringLiteral("cookies-visitor.txt")), &cookies, &sessions);
+    QCOMPARE(cookies, 3);
+    QCOMPARE(sessions, 0);
+
+    Cookies::count(fixturePath(QStringLiteral("cookies-session.txt")), &cookies, &sessions);
+    QCOMPARE(cookies, 4);
+    QCOMPARE(sessions, 2);
+
+    // A path that is not there is zero, not a crash and not a guess.
+    Cookies::count(QStringLiteral("/nonexistent/cookies.txt"), &cookies, &sessions);
+    QCOMPARE(cookies, 0);
+    QCOMPARE(sessions, 0);
+}
+
+void HurutubeTests::cookiesDescribeTellsTheTruth()
+{
+    // Anonymous is a working state, and it says so rather than implying breakage.
+    QVERIFY(Cookies::describe(QString(), QString()).contains(QStringLiteral("anonymous")));
+
+    // A browser is named and nothing more: nothing here reads a browser's
+    // database, so this wording must not claim to know whether it holds a session.
+    QCOMPARE(Cookies::describe(QStringLiteral("firefox"), QStringLiteral("browser")),
+             QStringLiteral("browser cookies: firefox"));
+
+    // A file of visitor cookies must not read as signed in. That false claim is
+    // exactly what this wording exists to prevent.
+    const QString visitor =
+        Cookies::describe(fixturePath(QStringLiteral("cookies-visitor.txt")), QStringLiteral("file"));
+    QVERIFY(visitor.contains(QStringLiteral("no session")));
+    QVERIFY(!visitor.startsWith(QStringLiteral("signed in")));
+
+    // A real session says how many cookies and how many of them are the session.
+    const QString live =
+        Cookies::describe(fixturePath(QStringLiteral("cookies-session.txt")), QStringLiteral("file"));
+    QVERIFY(live.startsWith(QStringLiteral("signed in")));
+    QVERIFY(live.contains(QStringLiteral("4 cookies")));
+    QVERIFY(live.contains(QStringLiteral("2 of them a session")));
+}
+
+void HurutubeTests::cookiesLadderHonoursExplicitConfig()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    const QString config = home.path() + QStringLiteral("/.config/hurutube/config.toml");
+
+    writeFile(config, QStringLiteral("cookies_from = \"brave\"\n"));
+    QString kind;
+    QCOMPARE(Cookies::resolve(&kind, home.path()), QStringLiteral("brave"));
+    QCOMPARE(kind, QStringLiteral("browser"));
+
+    // A named file wins over a named browser: it is the more specific instruction,
+    // and the session check is for sources the app found by itself.
+    const QString named = home.path() + QStringLiteral("/exported.txt");
+    writeFile(config,
+              QStringLiteral("cookies_from = \"brave\"\ncookies_file = \"%1\"\n").arg(named));
+    QCOMPARE(Cookies::resolve(&kind, home.path()), named);
+    QCOMPARE(kind, QStringLiteral("file"));
+}
+
+void HurutubeTests::cookiesLadderDoesNotLetAVisitorFileShadowFirefox()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    const QString appCookies = home.path() + QStringLiteral("/.cache/hurutube/cookies.txt");
+
+    // A cookies file is present but carries no session: it must not shadow a
+    // browser that can actually serve a signed-in request.
+    copyFixture(QStringLiteral("cookies-visitor.txt"), appCookies);
+    writeFile(home.path() + QStringLiteral("/.mozilla/firefox/profiles.ini"),
+              QStringLiteral("[Profile0]\nPath=abc.default\n"));
+    QString kind;
+    QCOMPARE(Cookies::resolve(&kind, home.path()), QStringLiteral("firefox"));
+    QCOMPARE(kind, QStringLiteral("browser"));
+
+    // Put a session in the same file and it wins: it is a working source, and
+    // costs no browser lookup.
+    copyFixture(QStringLiteral("cookies-session.txt"), appCookies);
+    QCOMPARE(Cookies::resolve(&kind, home.path()), appCookies);
+    QCOMPARE(kind, QStringLiteral("file"));
+}
+
+void HurutubeTests::cookiesLadderInheritsAndEndsEmpty()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+
+    // Nothing of its own: the sibling player's setting is inherited instead of
+    // being asked for a second time.
+    writeFile(home.path() + QStringLiteral("/.config/huruwave/config.toml"),
+              QStringLiteral("cookies_from = \"firefox\"\n"));
+    QString kind;
+    QCOMPARE(Cookies::resolve(&kind, home.path()), QStringLiteral("firefox"));
+    QCOMPARE(kind, QStringLiteral("browser"));
+
+    // A home with nothing in it resolves to nothing -- and clears `kind`, so a
+    // caller cannot mistake a stale value for a source that was found.
+    QTemporaryDir bare;
+    QVERIFY(bare.isValid());
+    kind = QStringLiteral("stale");
+    QVERIFY(Cookies::resolve(&kind, bare.path()).isEmpty());
+    QVERIFY(kind.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(HurutubeTests)

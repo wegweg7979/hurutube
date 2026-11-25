@@ -1,0 +1,8 @@
+# Netscape HTTP Cookie File
+# A cookies file that DOES carry a session. The session rows are the HttpOnly
+# ones, which is why a reader that skips every `#` line sees this file as empty.
+# Values are placeholders, never real cookies.
+#HttpOnly_.youtube.com	TRUE	/	TRUE	1799999999	SID	placeholder-session-value
+#HttpOnly_.youtube.com	TRUE	/	TRUE	1799999999	__Secure-1PSID	placeholder-session-value
+.youtube.com	TRUE	/	TRUE	1799999999	VISITOR_INFO1_LIVE	placeholder-visitor-cookie
+.youtube.com	TRUE	/	FALSE	1799999999	PREF	f6=40000000
