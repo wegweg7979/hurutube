@@ -1,5 +1,7 @@
 # hurutube
 
+![hurutube](assets/hurutube-wordmark.png)
+
 A small YouTube player: search, watch, and no Shorts. The video plays in mpv with
 GPU decode (VA-API).
 

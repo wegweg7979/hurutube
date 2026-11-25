@@ -37,6 +37,12 @@ set(hurutube_qml_files
   Transport.qml
   HelpOverlay.qml
   HistoryPane.qml)
+# The wordmark the help overlay draws. Shipped inside the binary like the QML is,
+# so it cannot go missing from the user's disk, and the alias keeps the QML's
+# `source:` a plain module-relative path ("images/hurutube-wordmark.png").
+set(hurutube_qml_assets src/images/hurutube-wordmark.png)
+set_source_files_properties(${hurutube_qml_assets}
+  PROPERTIES QT_RESOURCE_ALIAS images/hurutube-wordmark.png)
 set(hurutube_qml_sources "")
 foreach(qml IN LISTS hurutube_qml_files)
   # Flat aliases: the files sit at the module root, so relative `source:` in
@@ -52,7 +58,8 @@ qt_add_qml_module(hurutube
   # which is also where the executable must land (rpm/hurutube.spec installs
   # %{_vpath_builddir}/hurutube) -- that collision fails the link.
   OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml/hurutube
-  QML_FILES ${hurutube_qml_sources})
+  QML_FILES ${hurutube_qml_sources}
+  RESOURCES ${hurutube_qml_assets})
 
 enable_testing()
 add_executable(hurutube_tests tests/hurutube_tests.cpp)

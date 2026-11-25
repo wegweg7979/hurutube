@@ -18,7 +18,7 @@ Rectangle {
     Rectangle {
         anchors.centerIn: parent
         width: Math.min(parent.width - 80, 620)
-        height: Math.min(parent.height - 80, 470)
+        height: Math.min(parent.height - 80, 560)
         color: theme.darkBackground
         radius: Math.min(6, theme.radius)
         border.color: theme.muted
@@ -28,6 +28,20 @@ Rectangle {
             anchors.fill: parent
             anchors.margins: 24
             spacing: 10
+
+            // The wordmark. It is compiled into the app rather than read from a
+            // PNG beside it (CMakeLists gives it a module alias), so the one
+            // screen where the app names itself cannot lose its mark to a
+            // packaging slip.
+            Image {
+                source: "images/hurutube-wordmark.png"
+                sourceSize.width: 660
+                Layout.preferredWidth: 330
+                Layout.preferredHeight: Math.round(Layout.preferredWidth * 332 / 1400)
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                Layout.alignment: Qt.AlignLeft
+            }
 
             Text {
                 text: qsTr("Keyboard")
