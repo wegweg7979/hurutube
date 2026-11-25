@@ -7,15 +7,6 @@ GPU decode (VA-API).
 On Hurunagus it comes from its own COPR (`wegweg7979/hurutube`), so there is
 nothing to build there.
 
-## Shorts
-
-Blocked, and not by guessing. YouTube's own search API returns Shorts in a
-renderer of their own, so they are never read into the list at all — one real
-reply for a single query carried 12 videos and 30 Shorts. A `/shorts/` link is
-refused by name instead of played, and a channel listing comes from its `/videos`
-tab, which carries none either. Nothing is filtered by duration, so a genuinely
-short video is still a video.
-
 ## Keys
 
 | Key | What it does |
