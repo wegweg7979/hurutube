@@ -1,8 +1,7 @@
 # hurutube
 
 A small YouTube player: search, watch, and no Shorts. The video plays in mpv with
-GPU decode (VA-API); the window is the browser and the remote control, and it
-follows the desktop theme.
+GPU decode (VA-API).
 
 ![hurutube's results list](docs/screenshot.png)
 
@@ -51,43 +50,3 @@ short video is still a video.
 | `?` | every key, in the window |
 | `Q` | quit |
 
-Closing mpv's window stops the video and leaves the app where it was; the
-position is remembered, so playing it again resumes.
-
-## How it is put together
-
-- **Search** is YouTube's inner API, one POST, well under a second — and it is
-  where the Shorts block comes from, because that reply keeps Shorts in their own
-  renderer. Channels and playlists go through `yt-dlp` instead: the inner browse
-  endpoint answers an anonymous client with a header and nothing else.
-- **Playback** is mpv over its JSON IPC socket, with `--hwdec=vaapi`. mpv owns
-  the video window; embedding it would mean linking libmpv and sharing the Qt
-  Quick scene graph for a window you watch full screen anyway.
-- **The selected row is pre-resolved** while you are still reading the list
-  (`yt-dlp -g`), and mpv is given the two direct URLs. Measured on studiobox2:
-  **0.7–1.8 s** to the first frame that way, against **~18 s** for a cold resolve
-  inside the playback path.
-- **What is remembered** is one JSON file, `~/.local/state/hurutube/history.json`,
-  written atomically, capped, and holding a position only when resuming makes
-  sense (not for two seconds in, not for a video watched to the end).
-- **Which YouTube session is used** is resolved at startup, in this order: an
-  explicit `cookies_file`, then `cookies_from`, in `~/.config/hurutube/config.toml`
-  (both honoured as written) → a cookies file at
-  `~/.cache/hurutube/cookies.txt`, **but only if it really carries a session** →
-  Firefox (a plain sqlite file, no keyring to fail) → that same file even without
-  a session → another player's `cookies_from` (huruwave, then cliamp). The window
-  says which one it is and what it can do — "signed in — cookie file, 24 cookies,
-  6 of them a session" versus "no cookies — anonymous search only" — because a
-  cookies file that exists is not the same thing as a session.
-- **Cookies are a fallback, never the default.** yt-dlp is always tried
-  anonymously first, and the cookies are used only when that attempt fails
-  (age-gated or members-only videos). Signing in is what makes YouTube hand these
-  clients **an empty format list** — measured on studiobox2: 37–44 formats
-  anonymously against **0** with the browser's session, on every video tried and
-  every player client — so cookies-by-default would play nothing at all, and the
-  footer says "needed cookies" when the fallback is what worked. mpv's own
-  yt-dlp call gets no cookies for the same reason: a fallback that cannot play is
-  worse than an anonymous one that can.
-
-Requires `mpv`, `yt-dlp` and Qt 6 (qt6-qtdeclarative); a JS runtime for yt-dlp is
-recommended, since extraction degrades without one.
