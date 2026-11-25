@@ -41,7 +41,8 @@ short video is still a video.
 | `/` or `Ctrl+L` | focus the search box |
 | `Enter` | search, or open a pasted link, or play the highlighted row |
 | `↑` `↓` | move through the list |
-| `Space` | play the highlighted row, or pause and resume |
+| `Space` | play the highlighted row, or pause what is playing |
+| double click | play the row under the cursor |
 | `←` `→` | jump ten seconds |
 | `R` | start the current video again |
 | `A` | audio only (no video window) |

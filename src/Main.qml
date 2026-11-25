@@ -90,11 +90,22 @@ ApplicationWindow {
             window.setStatus(qsTr("playing “%1”").arg(row.title), false)
     }
 
+    // The row under an index, or null: every caller has to bounds-check anyway,
+    // and doing it once is how the list stops being a source of off-by-one bugs.
+    function rowAt(index) {
+        return (index >= 0 && index < results.count) ? results.get(index) : null
+    }
+
+    function selectIndex(index) {
+        if (index >= 0 && index < results.count)
+            list.currentIndex = index
+    }
+
     // The row's own URL, so the next one can be resolved while this one plays.
     function presolveCurrent() {
-        if (list.currentIndex < 0 || list.currentIndex >= results.count)
-            return
-        player.presolve(results.get(list.currentIndex).url)
+        const row = window.rowAt(list.currentIndex)
+        if (row)
+            player.presolve(row.url)
     }
 
     function playNext(step) {
@@ -271,22 +282,23 @@ ApplicationWindow {
                 clip: true
                 model: results
                 spacing: 2
-                delegate: VideoDelegate {}
+                delegate: VideoDelegate {
+                    // A single click moves the selection, so the keyboard and the
+                    // mouse agree about where Enter goes; a double click plays the
+                    // row under the cursor, not whichever row was highlighted.
+                    onRowClicked: (index) => window.selectIndex(index)
+                    onRowDoubleClicked: (index) => window.playRow(window.rowAt(index), false)
+                }
 
                 onCurrentIndexChanged: window.presolveCurrent()
             }
 
-            // Enter plays the highlighted row; a double click does the same,
-            // because a list that only answers the keyboard is a guessing game
-            // for anyone with a mouse.
-            MouseArea {
-                anchors.fill: parent
-                acceptedButtons: Qt.NoButton
-                onDoubleClicked: {
-                    if (list.currentIndex >= 0 && list.currentIndex < results.count)
-                        window.playRow(results.get(list.currentIndex), false)
-                }
-            }
+            // Enter plays the highlighted row; the delegate handles the mouse
+            // (a single click moves the selection, a double click plays the row
+            // under the cursor). The old double-click handler here could never
+            // fire at all: a MouseArea with acceptedButtons Qt.NoButton accepts
+            // nothing, and it played the highlighted row rather than the clicked
+            // one anyway.
 
             Text {
                 anchors.centerIn: parent
@@ -371,17 +383,17 @@ ApplicationWindow {
         autoRepeat: false
         enabled: !searchField.activeFocus && !window.helpOpen && !window.historyOpen
         onActivated: {
-            // Space is the play/pause key in both senses: with nothing loaded it
-            // starts the highlighted row -- the thing Return used to be needed
-            // for -- and with something loaded it pauses or resumes. `playing`
-            // means "the engine has a file" (it tracks idle-active), so it stays
-            // true while paused, which is what makes the toggle branch right; the
-            // engine going idle at the end of a video makes Space start the next
-            // highlighted row instead.
-            if (player.playing)
+            // Space acts on what you are pointing at. Pausing is only right when
+            // the highlighted row IS the video that is playing -- so pointing
+            // somewhere else and pressing Space starts that row instead of
+            // confusing the two (a running video and the selection are different
+            // things, and `playing` only means "a file is loaded"). When the
+            // engine goes idle after a video ends, the next row starts.
+            const row = window.rowAt(list.currentIndex)
+            if (row && (!player.playing || !window.current || row.id !== window.current.id))
+                window.playRow(row, false)
+            else
                 player.togglePause()
-            else if (list.currentIndex >= 0 && list.currentIndex < results.count)
-                window.playRow(results.get(list.currentIndex), false)
         }
     }
 

@@ -46,6 +46,20 @@ Item {
 
     HoverHandler { id: hover }
 
+    // The mouse, which the list used to ignore entirely. The delegate is its own
+    // component, so it cannot reach the window's functions (an id from another
+    // file is not in scope) -- it reports what happened, and Main.qml decides.
+    // TapHandler rather than MouseArea so a drag that scrolls cannot be mistaken
+    // for a click.
+    signal rowClicked(int index)
+    signal rowDoubleClicked(int index)
+
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        onTapped: delegate.rowClicked(delegate.index)
+        onDoubleTapped: delegate.rowDoubleClicked(delegate.index)
+    }
+
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 14
