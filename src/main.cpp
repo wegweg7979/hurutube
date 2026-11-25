@@ -316,6 +316,12 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("cookieStatus"),
                                              Cookies::describe(cookieSource, cookieKind));
 
+    // The engine comes up here, after the cookie source is set: setCookieSource()
+    // restarts a *running* engine when the source changes, so starting it in the
+    // constructor made that setter kill the engine it had just started (and the
+    // restart was then skipped if mpv had not finished dying).
+    player.start();
+
     // Loaded through the QML module, not by a qrc:/ URL: the module's files are
     // compiled at build time, which keeps a stale per-user QML cache from serving
     // the previous build's UI.

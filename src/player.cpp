@@ -160,7 +160,10 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
                 m_cache.insert(url, entry);
                 emit resolved(url, true);
             });
+}
 
+void Player::start()
+{
     startEngine();
 }
 

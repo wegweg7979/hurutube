@@ -76,6 +76,16 @@ public:
         setCookieSource(cookiesFile, cookiesFromBrowser);
     }
 
+    // The engine is started by the app, never by the constructor. main() sets the
+    // cookie source first, and setCookieSource() terminates the engine when the
+    // source changes -- so starting in the constructor meant every launch WITH a
+    // cookie source killed the engine it had just started, and when mpv had not
+    // finished dying inside the wait, the restart was skipped by the guard: the
+    // app then had no engine at all (measured: a socket that refuses connections
+    // while an mpv process still existed). Nothing needs an engine before the
+    // window is loaded, so the start belongs here.
+    void start();
+
     // `title` becomes mpv's window title, which for a direct stream URL would
     // otherwise be a googlevideo URL.
     Q_INVOKABLE void play(const QString &url, double startSeconds, const QString &title);
