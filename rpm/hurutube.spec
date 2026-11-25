@@ -13,7 +13,7 @@
 %global debug_package %{nil}
 
 Name:           hurutube
-Version:        0.1.2
+Version:        0.1.3
 Release:        1%{?dist}
 Summary:        A small YouTube player: search, watch, and no Shorts
 
@@ -94,6 +94,22 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
+* Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.3-1
+- The list answers the mouse: a single click moves the selection, and a double
+  click plays the row under the cursor. The previous double-click handler could
+  never fire at all -- its MouseArea accepted no buttons -- and it played the
+  highlighted row rather than the clicked one.
+- `Space` acts on what is pointed at: when the highlighted row is not the video
+  that is playing it starts that row, and when it is, it pauses or resumes. Before,
+  Space paused whenever any file was loaded, so pressing it on another row paused
+  the video that was already running.
+- The playback engine is started AFTER the cookie source is set. setCookieSource()
+  terminates a running engine when the source changes, and the engine used to start
+  in the constructor -- so on a machine where a cookie source resolves (Firefox
+  here), every launch killed the engine it had just started, and when mpv had not
+  finished dying inside the wait the restart was skipped, leaving the app with an
+  IPC socket that accepted no connections. Nothing needs an engine before the
+  window is loaded, so the headless commands no longer start one either.
 * Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.2-1
 - The YouTube session is now resolved rather than merely configured: an explicit
   `cookies_file` or `cookies_from`, then a cookies file that really carries a
