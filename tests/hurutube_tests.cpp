@@ -57,6 +57,7 @@ private slots:
     void codecSelectorAlwaysKeepsAWayToPlay();
     void codecCycleVisitsEveryChoiceAndReturns();
     void codecWordingMatchesTheDecision();
+    void codecLegacyIntelDriverPrefersH264();
 
 private:
     static QByteArray fixture(const QString &name)
@@ -498,6 +499,7 @@ void HurutubeTests::codecAutoFollowsTheDriverNotTheModel()
     QVERIFY(haswell.h264);
     QVERIFY(!haswell.vp9);
     QVERIFY(!haswell.av1);
+    QCOMPARE(haswell.driver, QStringLiteral("i965"));
     QCOMPARE(Codec::effective(Codec::Preference::Auto, haswell), Codec::Preference::Avc);
 
     const Codec::Capability iris =
@@ -505,6 +507,7 @@ void HurutubeTests::codecAutoFollowsTheDriverNotTheModel()
     QVERIFY(iris.h264);
     QVERIFY(iris.vp9);
     QVERIFY(iris.av1);
+    QCOMPARE(iris.driver, QStringLiteral("iHD"));
     QCOMPARE(Codec::effective(Codec::Preference::Auto, iris), Codec::Preference::Auto);
 
     // No answer: restrict nothing, and do not pretend to know. This is the case the
@@ -593,6 +596,58 @@ void HurutubeTests::codecWordingMatchesTheDecision()
     QVERIFY(Codec::describe(Codec::Preference::Avc, iris).contains(QStringLiteral("asked for")));
     QVERIFY(Codec::describe(Codec::Preference::Av1, haswell).contains(QStringLiteral("decode on the CPU")));
     QVERIFY(Codec::describe(Codec::Preference::Auto, Codec::Capability{}).contains(QStringLiteral("no answer")));
+}
+
+void HurutubeTests::codecLegacyIntelDriverPrefersH264()
+{
+    // A pre-Skylake Intel GPU whose driver DOES advertise VP9. The VP9 the legacy
+    // i965 driver offers those parts is hybrid -- part of the work stays on the CPU
+    // -- so H.264 (fully accelerated there) is the better answer, which is what the
+    // user reported for their Devil's Canyon. Without this rule the app would see
+    // "VP9 available" and quietly hand the GPU a half-software stream.
+    const Codec::Capability legacy =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-i965-vp9.txt"))));
+    QCOMPARE(legacy.driver, QStringLiteral("i965"));
+    QVERIFY(legacy.h264);
+    QVERIFY(legacy.vp9);   // advertised, and still not what auto picks
+    QVERIFY(!legacy.av1);
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, legacy), Codec::Preference::Avc);
+    QVERIFY(Codec::selector(Codec::effective(Codec::Preference::Auto, legacy), false)
+                .contains(QStringLiteral("vcodec~=\"^avc\"")));
+    QCOMPARE(Codec::summary(Codec::Preference::Auto, legacy), QStringLiteral("auto → H.264"));
+
+    // The reason printed must not claim the driver lacks VP9 -- it does not; it
+    // just does not accelerate all of it. That distinction is the whole point.
+    const QString why = Codec::describe(Codec::Preference::Auto, legacy);
+    QVERIFY(why.contains(QStringLiteral("i965")));
+    QVERIFY(why.contains(QStringLiteral("partly")));
+
+    // Asking for VP9 anyway is allowed, and then said out loud as partial.
+    QCOMPARE(Codec::effective(Codec::Preference::Vp9, legacy), Codec::Preference::Vp9);
+    QVERIFY(Codec::describe(Codec::Preference::Vp9, legacy).contains(QStringLiteral("partly")));
+
+    // And a modern driver must not be caught by that rule: iHD means full VP9/AV1,
+    // so auto stays unrestricted.
+    const Codec::Capability modern =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-iris-xe.txt"))));
+    QCOMPARE(modern.driver, QStringLiteral("iHD"));
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, modern), Codec::Preference::Auto);
+
+    // The same rule against the REAL payload from the user's Devil's Canyon, which
+    // advertises no VP9 at all. H.264 again, but for the other stated reason: the
+    // message must say the driver does not offer the newer codecs, not that it
+    // accelerates them partly -- those are different machines and different reasons.
+    const Codec::Capability canyon =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-devil-canyon.txt"))));
+    QCOMPARE(canyon.driver, QStringLiteral("i965"));
+    QVERIFY(canyon.h264);
+    QVERIFY(!canyon.vp9);
+    QVERIFY(!canyon.av1);
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, canyon), Codec::Preference::Avc);
+    QCOMPARE(Codec::summary(Codec::Preference::Auto, canyon), QStringLiteral("auto → H.264"));
+    const QString canyonWhy = Codec::describe(Codec::Preference::Auto, canyon);
+    QVERIFY(canyonWhy.contains(QStringLiteral("H.264 only")));
+    QVERIFY(!canyonWhy.contains(QStringLiteral("partly")));
 }
 
 QTEST_GUILESS_MAIN(HurutubeTests)

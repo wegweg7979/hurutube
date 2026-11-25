@@ -1,0 +1,32 @@
+# A REAL capture: the user's Devil's Canyon (i5-4690K) in lounge-box, which the
+# user pointed out can PARTIALLY decode VP9. Its driver offers only MPEG2,
+# H.264, VC1 and JPEG for decoding -- the newer codecs do not appear even
+# though the silicon can do some of that work on the GPU.
+#
+# Auto must therefore ask for H.264 here, which is both the fully hardware path
+# and what the user asked for. Taken with: ssh lounge-box vainfo
+Trying display: wayland
+Trying display: x11
+Trying display: drm
+vainfo: VA-API version: 1.24 (libva 2.24.0)
+vainfo: Driver version: Intel i965 driver for Intel(R) Haswell Desktop - 2.4.5
+vainfo: Supported profile and entrypoints
+      VAProfileMPEG2Simple            :	VAEntrypointVLD
+      VAProfileMPEG2Simple            :	VAEntrypointEncSlice
+      VAProfileMPEG2Main              :	VAEntrypointVLD
+      VAProfileMPEG2Main              :	VAEntrypointEncSlice
+      VAProfileH264ConstrainedBaseline:	VAEntrypointVLD
+      VAProfileH264ConstrainedBaseline:	VAEntrypointEncSlice
+      VAProfileH264Main               :	VAEntrypointVLD
+      VAProfileH264Main               :	VAEntrypointEncSlice
+      VAProfileH264High               :	VAEntrypointVLD
+      VAProfileH264High               :	VAEntrypointEncSlice
+      VAProfileH264MultiviewHigh      :	VAEntrypointVLD
+      VAProfileH264MultiviewHigh      :	VAEntrypointEncSlice
+      VAProfileH264StereoHigh         :	VAEntrypointVLD
+      VAProfileH264StereoHigh         :	VAEntrypointEncSlice
+      VAProfileVC1Simple              :	VAEntrypointVLD
+      VAProfileVC1Main                :	VAEntrypointVLD
+      VAProfileVC1Advanced            :	VAEntrypointVLD
+      VAProfileNone                   :	VAEntrypointVideoProc
+      VAProfileJPEGBaseline           :	VAEntrypointVLD

@@ -1,0 +1,29 @@
+# A pre-Skylake Intel GPU on the LEGACY i965 driver that DOES advertise VP9 -- the
+# case that motivated the i965 rule in effective().
+#
+# NOT captured: no machine here serves VP9 through i965. It is constructed from the
+# i965 driver's real profile list for such parts (Broadwell hybrid VP9), because the
+# point being tested is the DECISION, not the hardware: with i965 answering, `auto`
+# must pick H.264 even though VAProfileVP9Profile0 is advertised as VLD -- the i965
+# VP9 is hybrid, part of the work stays on the CPU, which the user reported for
+# their Devil's Canyon.
+#
+# The captured counterpart is vainfo-iris-xe.txt (iHD, full VP9 + AV1).
+libva info: VA-API version: 1.20.0
+libva info: User environment variable requested driver 'i965'
+libva info: Trying to open /usr/lib64/dri/i965_drv_video.so
+libva info: Found init function __vaDriverInit_1_20
+libva info: va_openDriver() returns 0
+vainfo: VA-API version: 1.20 (libva 2.20.0)
+vainfo: Driver version: Intel i965 driver for Intel(R) Broadwell - 2.4.5 ()
+vainfo: Supported profile and entry_pt
+      VAProfileMPEG2Simple            : VAEntrypointVLD
+      VAProfileMPEG2Main              : VAEntrypointVLD
+      VAProfileH264ConstrainedBaseline: VAEntrypointVLD
+      VAProfileH264Main               : VAEntrypointVLD
+      VAProfileH264High               : VAEntrypointVLD
+      VAProfileH264High               : VAEntrypointEncSlice
+      VAProfileVC1Simple              : VAEntrypointVLD
+      VAProfileJPEGBaseline           : VAEntrypointVLD
+      VAProfileVP8Version0_3          : VAEntrypointVLD
+      VAProfileVP9Profile0            : VAEntrypointVLD

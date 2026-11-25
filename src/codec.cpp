@@ -29,6 +29,38 @@ QStringList decodable(const Capability &capability)
     return list;
 }
 
+// For prose: "H.264", "VP9", "AV1". name() is the config/flag spelling.
+QString codecName(Preference preference)
+{
+    switch (preference) {
+    case Preference::Avc:
+        return QStringLiteral("H.264");
+    case Preference::Vp9:
+        return QStringLiteral("VP9");
+    case Preference::Av1:
+        return QStringLiteral("AV1");
+    case Preference::Auto:
+        break;
+    }
+    return QStringLiteral("that codec");
+}
+
+// Which VA-API driver is answering, from its own version line. Only the legacy
+// Intel driver is acted on; another vendor's name changes nothing.
+QString driverName(const QStringList &lines)
+{
+    for (const QString &line : lines) {
+        if (!line.contains(QStringLiteral("Driver version:")))
+            continue;
+        if (line.contains(QStringLiteral("i965")))
+            return QStringLiteral("i965");
+        if (line.contains(QStringLiteral("iHD")))
+            return QStringLiteral("iHD");
+        return QString();
+    }
+    return QString();
+}
+
 // "H.264, VP9 and AV1" -- the only place a list is humanised, so the two callers
 // that need it cannot drift apart.
 QString humanList(const QStringList &parts)
@@ -91,6 +123,7 @@ Capability fromVainfo(const QString &text)
 {
     const QStringList lines = QString::fromUtf8(text.toUtf8()).split(QLatin1Char('\n'));
     Capability capability;
+    capability.driver = driverName(lines);
     capability.h264 = decodes(lines, QStringLiteral("VAProfileH264High"))
                       || decodes(lines, QStringLiteral("VAProfileH264Main"))
                       || decodes(lines, QStringLiteral("VAProfileH264ConstrainedBaseline"))
@@ -123,8 +156,14 @@ Preference effective(Preference configured, const Capability &capability)
         return configured;
     if (!capability.any())
         return Preference::Auto;
-    // H.264 alone means every other codec would be software. Only for the case
-    // where the driver has told us that.
+    // The legacy Intel driver serves pre-Skylake parts, and the VP9 it advertises
+    // there is HYBRID -- part of the work stays on the CPU -- even though vainfo
+    // reports it as VAEntrypointVLD. Fully hardware H.264 beats a half-accelerated
+    // VP9, which is what the user reported for a Devil's Canyon. Driver-derived on
+    // purpose: it acts on what the driver calls itself, never on a CPU-model table.
+    if (capability.driver == QStringLiteral("i965") && capability.h264)
+        return Preference::Avc;
+    // H.264 alone means every other codec would be software.
     if (!capability.vp9 && !capability.av1)
         return Preference::Avc;
     return Preference::Auto;
@@ -176,16 +215,18 @@ QString describe(Preference configured, const Capability &capability)
     const Preference use = effective(configured, capability);
 
     if (configured != Preference::Auto) {
-        QString text = QStringLiteral("%1 (asked for in codec = %2)")
-                           .arg(use == Preference::Avc ? QStringLiteral("H.264")
-                                                       : use == Preference::Vp9 ? QStringLiteral("VP9")
-                                                                                : QStringLiteral("AV1"),
-                                name(configured));
+        QString text = QStringLiteral("%1 (asked for in codec = %2)").arg(codecName(use), name(configured));
         // Overriding the app on purpose is allowed; being quiet about the cost is
         // not. The footer separately reports what mpv actually ended up using.
+        // Absence first, partiality second: "this GPU has no AV1 at all" and "the
+        // driver has AV1 but only accelerates part of it" are different facts, and
+        // the haswell fixture is the first case (i965, no AV1 advertised at all).
         if (capability.any() && !isDecodable(use, capability)) {
             text += QStringLiteral(" — this GPU has no %1 VLD, so it will decode on the CPU")
-                        .arg(use == Preference::Vp9 ? QStringLiteral("VP9") : QStringLiteral("AV1"));
+                        .arg(codecName(use));
+        } else if (capability.driver == QStringLiteral("i965") && use != Preference::Avc) {
+            text += QStringLiteral(" — the i965 driver's %1 decode is only partly accelerated")
+                        .arg(codecName(use));
         }
         return text;
     }
@@ -194,10 +235,16 @@ QString describe(Preference configured, const Capability &capability)
         return QStringLiteral("auto (VA-API gave no answer — the codec is left to YouTube)");
 
     const QStringList can = decodable(capability);
-    if (use == Preference::Avc)
+    if (use == Preference::Avc) {
+        // Two different reasons, and they must not be conflated: the legacy driver
+        // DOES advertise the newer codec, it just does not accelerate all of it.
+        if (capability.driver == QStringLiteral("i965") && (capability.vp9 || capability.av1))
+            return QStringLiteral("auto → H.264 (the legacy i965 driver's newer-codec decode is "
+                                  "only partly accelerated; H.264 is fully hardware here)");
         return QStringLiteral("auto → H.264 (VA-API here decodes %1 only, so AV1/VP9 would run on "
                               "the CPU)")
             .arg(humanList(can));
+    }
     return QStringLiteral("auto (VA-API here decodes %1 — nothing to restrict)").arg(humanList(can));
 }
 
@@ -207,9 +254,7 @@ QString summary(Preference configured, const Capability &capability)
     if (use == Preference::Auto)
         return QStringLiteral("auto");
 
-    const QString wanted = use == Preference::Avc   ? QStringLiteral("H.264")
-                           : use == Preference::Vp9 ? QStringLiteral("VP9")
-                                                    : QStringLiteral("AV1");
+    const QString wanted = codecName(use);
     if (configured == Preference::Auto)
         return QStringLiteral("auto → %1").arg(wanted);  // the machine decided this
     if (capability.any() && !isDecodable(use, capability))

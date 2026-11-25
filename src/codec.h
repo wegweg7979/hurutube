@@ -40,6 +40,9 @@ struct Capability {
     bool h264 = false;
     bool vp9 = false;
     bool av1 = false;
+    // Which VA-API driver answered: "i965" (the legacy pre-Skylake path), "iHD",
+    // or empty when unknown. Only i965 is acted on -- see effective().
+    QString driver;
     // Where the answer came from: "vainfo", or empty when there was no answer.
     QString source;
     bool any() const { return h264 || vp9 || av1; }
@@ -56,6 +59,12 @@ Capability probe();
 // hardware path, Auto means H.264. An explicit preference is always honoured
 // as-is, even where hardware cannot decode it -- that is the user overriding the
 // app on purpose, and the footer reports what actually happens.
+//
+// On the legacy i965 driver, Auto means H.264 EVEN IF VP9 is advertised: the VP9
+// that driver offers on pre-Skylake parts is hybrid, with part of the work still
+// on the CPU, so a fully hardware H.264 stream is the better answer there. The
+// user confirmed this on a Devil's Canyon. This is a driver-derived rule, not a
+// CPU-model table: it acts on what the driver calls itself, nothing else.
 Preference effective(Preference configured, const Capability &capability);
 
 // V in the window: auto -> avc -> vp9 -> av1 -> auto.
