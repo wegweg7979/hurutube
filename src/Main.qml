@@ -370,7 +370,19 @@ ApplicationWindow {
         sequence: "Space"
         autoRepeat: false
         enabled: !searchField.activeFocus && !window.helpOpen && !window.historyOpen
-        onActivated: player.togglePause()
+        onActivated: {
+            // Space is the play/pause key in both senses: with nothing loaded it
+            // starts the highlighted row -- the thing Return used to be needed
+            // for -- and with something loaded it pauses or resumes. `playing`
+            // means "the engine has a file" (it tracks idle-active), so it stays
+            // true while paused, which is what makes the toggle branch right; the
+            // engine going idle at the end of a video makes Space start the next
+            // highlighted row instead.
+            if (player.playing)
+                player.togglePause()
+            else if (list.currentIndex >= 0 && list.currentIndex < results.count)
+                window.playRow(results.get(list.currentIndex), false)
+        }
     }
 
     Shortcut {

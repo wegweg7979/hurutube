@@ -40,7 +40,7 @@ Rectangle {
                     { "keys": "/ or Ctrl+L", "what": qsTr("focus the search box") },
                     { "keys": "Enter", "what": qsTr("search, or open a pasted link") },
                     { "keys": "↑ ↓", "what": qsTr("move through the list") },
-                    { "keys": "Space", "what": qsTr("pause or resume") },
+                    { "keys": "Space", "what": qsTr("play the highlighted row, or pause and resume") },
                     { "keys": "← →", "what": qsTr("jump 10 seconds") },
                     { "keys": "R", "what": qsTr("restart the video from the beginning") },
                     { "keys": "A", "what": qsTr("audio only") },

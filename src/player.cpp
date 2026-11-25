@@ -60,6 +60,16 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
         // readable even while decoding through VA-API, where video-params reports
         // the pixel format as "vaapi" instead.
         observe(IdVideoFormat, QStringLiteral("video-format"));
+        // The arrow keys are the app's ten seconds, but while watching, the video
+        // window has focus and mpv's own built-in bindings (five seconds) are the
+        // ones that fire. `keybind` replaces a default rather than joining it --
+        // measured with `keypress` against a throwaway engine: one press moved
+        // exactly 10.3 s, not 15 -- so this makes both windows agree with the
+        // transport buttons and the help. (mpv 0.41 has no --left/--right option;
+        // `get_property input-bindings` still lists the shadowed default, which is
+        // why the property is not the proof -- the seek is.)
+        send({QStringLiteral("keybind"), QStringLiteral("LEFT"), QStringLiteral("seek -10")});
+        send({QStringLiteral("keybind"), QStringLiteral("RIGHT"), QStringLiteral("seek 10")});
         m_observed = true;
         m_ready = true;
         emit stateChanged();
