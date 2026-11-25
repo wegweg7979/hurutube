@@ -13,7 +13,7 @@
 %global debug_package %{nil}
 
 Name:           hurutube
-Version:        0.1.1
+Version:        0.1.2
 Release:        1%{?dist}
 Summary:        A small YouTube player: search, watch, and no Shorts
 
@@ -94,6 +94,25 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
+* Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.2-1
+- The YouTube session is now resolved rather than merely configured: an explicit
+  `cookies_file` or `cookies_from`, then a cookies file that really carries a
+  session, then Firefox, then another player's setting -- and the window and
+  `--status` say what it can actually do ("signed in -- cookie file, 24 cookies,
+  6 of them a session" against "no cookies -- anonymous search only").
+- Cookies stay a FALLBACK, never the default, on measurement: a signed-in session
+  offers fewer formats and a lower bitrate at every resolution (2160p 27987 to
+  17174 kbps, 1080p 4534 to 816), the same throughput on the same stream, and
+  about 3.5 s longer before playback starts. The "Premium" 1080p stream is not
+  cookie-gated either -- the app's own selector picks it anonymously.
+- Space plays the highlighted row as well as pausing and resuming it, and the
+  arrow keys are ten seconds in the video window too: mpv's built-in bindings are
+  five seconds and are the ones that fire while a video is up.
+- A helper process that will not die no longer drops the request. Qt's `start()`
+  on a process still reading Running does nothing but warn, which silently cost
+  the pre-resolve (playback fell back to mpv's own extraction) or a listing;
+  the request is now deferred until the process is really gone, and refusals are
+  reported with a name.
 * Tue Nov 24 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.1-1
 - The headless commands (`--status`, `--history`, `--search … --no-window`) no
   longer abort without a display. They constructed a QGuiApplication, which needs
