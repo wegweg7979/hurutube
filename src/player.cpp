@@ -102,6 +102,11 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
         setError(QStringLiteral("mpv socket: %1").arg(m_socket.errorString()));
     });
 
+    // What this machine can decode, asked once. It is the driver's own answer
+    // (`vainfo`), which is what makes `codec = auto` honest; with no answer the app
+    // restricts nothing and says so, rather than inferring a generation.
+    m_capability = Codec::probe();
+
     m_reconnect.setSingleShot(true);
     connect(&m_reconnect, &QTimer::timeout, this, &Player::connectSocket);
 
@@ -184,13 +189,10 @@ Player::~Player()
 
 QString Player::formatSelector() const
 {
-    // 1080p keeps VA-API decoding comfortable on this class of GPU while staying
-    // ahead of any screen the user has. AV1 is allowed: Iris Xe reports
-    // VAProfileAV1Profile0 VLD, so the reason other players exclude it does not
-    // apply here.
-    return m_audioOnly
-               ? QStringLiteral("bestaudio/best")
-               : QStringLiteral("bestvideo[height<=1080]+bestaudio/best[height<=1080]");
+    // Which codec, and why it is a preference at all, lives in codec.h. The short
+    // version: this expression is handed both to mpv's own yt-dlp fallback and to
+    // every resolve, so one place decides the codec for the whole app.
+    return Codec::selector(Codec::effective(m_codec, m_capability), m_audioOnly);
 }
 
 void Player::setError(const QString &message)
@@ -208,12 +210,54 @@ void Player::setCookieSource(const QString &cookiesFile, const QString &cookiesF
     m_cookiesFromBrowser = cookiesFromBrowser;
     // The cookie source is a command-line option, so it takes effect on the next
     // engine start rather than mid-flight.
-    if (changed && m_process.state() != QProcess::NotRunning) {
-        m_process.closeWriteChannel();
-        m_process.terminate();
-        m_process.waitForFinished(1500);
-        startEngine();
+    if (changed)
+        restartRunningEngine();
+}
+
+// The preference is a command-line option for the engine and a filter for every
+// resolve, so it cannot change mid-flight. The resolve cache is dropped with it:
+// those direct URLs were chosen under the OLD selector, and reusing one would play
+// exactly the codec the user just moved away from.
+void Player::setCodecPreference(Codec::Preference preference)
+{
+    if (preference == m_codec)
+        return;
+    const QString before = formatSelector();
+    m_codec = preference;
+    if (formatSelector() == before) {
+        // Same stream either way (auto on a H.264-only GPU against an explicit
+        // H.264, for instance): only the wording in the footer changes.
+        emit codecChanged();
+        return;
     }
+    m_cache.clear();
+    restartRunningEngine();
+    emit codecChanged();
+}
+
+void Player::cycleCodec()
+{
+    setCodecPreference(Codec::next(m_codec));
+}
+
+void Player::restartRunningEngine()
+{
+    if (m_process.state() == QProcess::NotRunning)
+        return;  // nothing to restart; the next start() uses the new setting already
+
+    m_process.closeWriteChannel();
+    m_process.terminate();
+    if (!m_process.waitForFinished(1500)) {
+        // Start SIGKILLing only when SIGTERM was ignored.
+        m_process.kill();
+        if (!m_process.waitForFinished(2000)) {
+            qWarning().noquote()
+                << "hurutube: the playback engine would not exit; leaving it down rather "
+                   "than starting a second one";
+            return;
+        }
+    }
+    startEngine();
 }
 
 void Player::startEngine()

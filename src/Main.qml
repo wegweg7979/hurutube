@@ -254,6 +254,19 @@ ApplicationWindow {
                 elide: Text.ElideRight
             }
 
+            // What codec will be asked for -- "auto" unless this machine's VA-API
+            // says something else is the only path (a Haswell GPU decodes H.264 and
+            // nothing newer, so auto becomes H.264 there). Terse on purpose: the
+            // reason is in --status and in the key list, and V cycles it.
+            Text {
+                visible: player.codecSummary.length > 0
+                text: qsTr("codec: %1").arg(player.codecSummary)
+                color: player.codecSummary.indexOf(qsTr("software")) >= 0 ? theme.yellow
+                                                                         : theme.muted
+                font.pixelSize: 12
+                Layout.alignment: Qt.AlignVCenter
+            }
+
             // Which YouTube session this is, said plainly. Muted only when it is a
             // real session, yellow otherwise: an app that cannot tell "signed in"
             // from "found a cookies file" is how you end up debugging the wrong
@@ -452,6 +465,16 @@ ApplicationWindow {
         autoRepeat: false
         enabled: !searchField.activeFocus
         onActivated: player.toggleFullscreen()
+    }
+
+    // Cycles the codec preference for this session: auto → H.264 → VP9 → AV1.
+    // Session-only by design -- config.toml is read-only, and more importantly a
+    // typo in it must never be able to stop playback (codec.h).
+    Shortcut {
+        sequence: "V"
+        autoRepeat: false
+        enabled: !searchField.activeFocus
+        onActivated: player.cycleCodec()
     }
 
     Shortcut {

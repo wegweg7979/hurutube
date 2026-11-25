@@ -8,6 +8,8 @@
 #include <QString>
 #include <QTimer>
 
+#include "codec.h"
+
 // Video playback, driven through mpv's JSON IPC socket.
 //
 // mpv is the engine on purpose: it resolves YouTube URLs through yt-dlp itself,
@@ -48,6 +50,11 @@ class Player : public QObject {
     Q_PROPERTY(bool usedCookies READ usedCookies NOTIFY usedCookiesChanged)
     Q_PROPERTY(bool audioOnly READ audioOnly WRITE setAudioOnly NOTIFY audioOnlyChanged)
     Q_PROPERTY(bool ready READ ready NOTIFY stateChanged)
+    // What codec will be asked for, and why -- from VA-API's own answer about this
+    // machine, never from an assumption about its generation.
+    Q_PROPERTY(QString codecStatus READ codecStatus NOTIFY codecChanged)
+    // The same thing in a few words, for the footer.
+    Q_PROPERTY(QString codecSummary READ codecSummary NOTIFY codecChanged)
 
 public:
     explicit Player(QObject *parent = nullptr, const QString &mpvBinary = {},
@@ -66,6 +73,8 @@ public:
     bool usedCookies() const { return m_usedCookies; }
     bool audioOnly() const { return m_audioOnly; }
     bool ready() const { return m_ready; }
+    QString codecStatus() const { return Codec::describe(m_codec, m_capability); }
+    QString codecSummary() const { return Codec::summary(m_codec, m_capability); }
 
     void setVolume(int volume);
     Q_INVOKABLE void setVolumeFromQml(int volume) { setVolume(volume); }
@@ -74,6 +83,18 @@ public:
     Q_INVOKABLE void setCookieSourceQml(const QString &cookiesFile, const QString &cookiesFromBrowser)
     {
         setCookieSource(cookiesFile, cookiesFromBrowser);
+    }
+
+    // Haswell and Broadwell decode H.264 in hardware and nothing newer, so on
+    // those machines the plain `bestvideo` (AV1 or VP9) silently decodes on the
+    // CPU. `codec = auto` reads that from VA-API; an explicit preference overrides
+    // it, and V in the window cycles it for the session. Nothing is written back
+    // to config.toml, which is read-only on purpose (config.h).
+    void setCodecPreference(Codec::Preference preference);
+    Q_INVOKABLE void cycleCodec();
+    Q_INVOKABLE QString codecName() const
+    {
+        return Codec::name(Codec::effective(m_codec, m_capability));
     }
 
     // The engine is started by the app, never by the constructor. main() sets the
@@ -116,6 +137,7 @@ signals:
     void videoChanged();
     void usedCookiesChanged();
     void audioOnlyChanged();
+    void codecChanged();
     // Playback of the current entry ran to its end (reason=eof), which is what
     // advances the list.
     void finished();
@@ -138,6 +160,13 @@ private:
     };
 
     void startEngine();
+    // Terminate a *running* engine and start a fresh one with the new command line.
+    // The wait is not cosmetic: if mpv has not finished dying inside it,
+    // startEngine() refuses to start a second one and the app is left with no
+    // engine at all -- measured once, and the socket then refused connections while
+    // an mpv process still existed. A process that outlives SIGTERM is killed
+    // rather than waited on forever.
+    void restartRunningEngine();
     void send(const QJsonArray &command, bool withRequestId = true);
     void flushPending();
     void handleLine(const QByteArray &line);
@@ -204,6 +233,10 @@ private:
     QString m_mediaTitle;
     QString m_lastError;
     QString m_hwdec;
+    // What this machine can decode in hardware, asked once at startup, plus the
+    // preference in force. Together they decide the yt-dlp format expression.
+    Codec::Preference m_codec = Codec::Preference::Auto;
+    Codec::Capability m_capability;
     bool m_usedCookies = false;
     QString m_videoDescription;
     QString m_videoFormat;

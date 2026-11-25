@@ -13,7 +13,7 @@
 %global debug_package %{nil}
 
 Name:           hurutube
-Version:        0.1.3
+Version:        0.1.4
 Release:        1%{?dist}
 Summary:        A small YouTube player: search, watch, and no Shorts
 
@@ -94,6 +94,22 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
+* Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.4-1
+- Ask for a codec this machine can actually decode. `codec = auto|avc|vp9|av1` in
+  config.toml, and V cycles it for the session. `auto` is decided from VA-API's own
+  profile list: a GPU that decodes H.264 and nothing newer (Haswell, Broadwell) now
+  asks YouTube for H.264 instead of being handed AV1/VP9 to decode on the CPU --
+  which looks like working playback while it drops frames. With no answer from the
+  driver nothing is restricted and the app says so rather than guessing from a CPU
+  model or a PCI id. Nothing is written back to config.toml (read-only on purpose).
+- A codec preference is never a demand: every format expression ends in an
+  unfiltered fallback, so a video with no stream in the wanted codec still plays.
+- `--status` prints which codec will be asked for and why; the window footer shows
+  it tersely, and "software" when a preference cannot be decoded in hardware here.
+- A running engine that ignores SIGTERM is now killed rather than waited on, when
+  the cookie source or the codec preference changes -- otherwise the app was left
+  with no engine at all (measured once: a socket refusing connections while an mpv
+  process still existed).
 * Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.3-1
 - The list answers the mouse: a single click moves the selection, and a double
   click plays the row under the cursor. The previous double-click handler could

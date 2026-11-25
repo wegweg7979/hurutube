@@ -21,6 +21,7 @@
 #include <functional>
 #include <memory>
 
+#include "codec.h"
 #include "config.h"
 #include "cookies.h"
 #include "history.h"
@@ -144,6 +145,17 @@ void printHistory(const History &history, bool asJson)
     }
 }
 
+// The codec the user asked for: `codec = ...` in config.toml, or HURUTUBE_CODEC
+// for verification runs that must not edit that file -- it is read-only on purpose
+// (config.h) because it also holds cookie settings.
+Codec::Preference configuredCodec()
+{
+    const QByteArray fromEnv = qgetenv("HURUTUBE_CODEC");
+    if (!fromEnv.isEmpty())
+        return Codec::fromConfig(QString::fromLocal8Bit(fromEnv));
+    return Codec::fromConfig(Config::read(QStringLiteral("codec")));
+}
+
 // What an agent needs to confirm hardware playback is possible on this machine,
 // and what the app would actually use.
 int printStatus(const QString &mpv, const QString &ytdlp)
@@ -176,26 +188,22 @@ int printStatus(const QString &mpv, const QString &ytdlp)
     QTextStream(stdout) << "cookies:    " << Cookies::describe(cookieSource, cookieKind) << Qt::endl;
 
     // The VA-API profiles that decide whether the streams YouTube serves can be
-    // decoded on the GPU instead of the CPU.
-    QProcess vainfo;
-    vainfo.start(QStringLiteral("vainfo"), {});
-    QString profiles;
-    if (vainfo.waitForFinished(4000)) {
-        const QStringList lines =
-            QString::fromUtf8(vainfo.readAllStandardOutput()).split(QLatin1Char('\n'));
-        for (const QString &line : lines) {
-            const QString trimmed = line.trimmed();
-            if (!trimmed.contains(QStringLiteral("VAEntrypointVLD")))
-                continue;
-            if (trimmed.contains(QStringLiteral("VAProfileH264High"))
-                || trimmed.contains(QStringLiteral("VAProfileVP9Profile0"))
-                || trimmed.contains(QStringLiteral("VAProfileAV1Profile0")))
-                profiles += trimmed.section(QLatin1Char(':'), 0, 0).trimmed() + QLatin1Char(' ');
-        }
-    }
+    // decoded on the GPU instead of the CPU -- and, from the same answer, the codec
+    // this machine will be asked for. One probe, one parse (codec.cpp), so the
+    // status line cannot disagree with what playback does.
+    const Codec::Capability capability = Codec::probe();
+    QStringList profiles;
+    if (capability.h264)
+        profiles << QStringLiteral("VAProfileH264High");
+    if (capability.vp9)
+        profiles << QStringLiteral("VAProfileVP9Profile0");
+    if (capability.av1)
+        profiles << QStringLiteral("VAProfileAV1Profile0");
     QTextStream(stdout) << "vaapi-vld:  "
                         << (profiles.isEmpty() ? QStringLiteral("(none found — software decode)")
-                                               : profiles.trimmed())
+                                               : profiles.join(QLatin1Char(' ')))
+                        << Qt::endl;
+    QTextStream(stdout) << "codec:      " << Codec::describe(configuredCodec(), capability)
                         << Qt::endl;
     QTextStream(stdout) << "note:       the app reports the codec it is really using in its "
                            "footer (hwdec-current), never an assumption"
@@ -281,6 +289,9 @@ int main(int argc, char *argv[])
                        cookieIsFile ? QString() : cookieSource);
     player.setCookieSource(cookieIsFile ? cookieSource : QString(),
                            cookieIsFile ? QString() : cookieSource);
+    // Set before start(): the preference is part of the engine's command line, and
+    // with the engine not yet running there is nothing to restart.
+    player.setCodecPreference(configuredCodec());
 
     const QString query = parser.value(searchOption).trimmed();
     const bool asJson = parser.isSet(jsonOption);
@@ -315,6 +326,10 @@ int main(int argc, char *argv[])
     // app runs, so there is nothing to notify about.
     engine.rootContext()->setContextProperty(QStringLiteral("cookieStatus"),
                                              Cookies::describe(cookieSource, cookieKind));
+    // What codec will be asked for and why, from VA-API's answer rather than from a
+    // guess about the machine's generation.
+    engine.rootContext()->setContextProperty(QStringLiteral("codecStatus"),
+                                             player.codecStatus());
 
     // The engine comes up here, after the cookie source is set: setCookieSource()
     // restarts a *running* engine when the source changes, so starting it in the

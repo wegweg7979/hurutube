@@ -46,6 +46,7 @@ Rectangle {
                     { "keys": "R", "what": qsTr("restart the video from the beginning") },
                     { "keys": "A", "what": qsTr("audio only") },
                     { "keys": "F", "what": qsTr("fullscreen") },
+                    { "keys": "V", "what": qsTr("cycle codec — auto, H.264, VP9, AV1 (this session)") },
                     { "keys": "Ctrl+H", "what": qsTr("what you have watched") },
                     { "keys": "Esc", "what": qsTr("close this, or clear the search box") },
                     { "keys": "Q", "what": qsTr("quit") }

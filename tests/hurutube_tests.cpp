@@ -10,6 +10,7 @@
 
 #include <functional>
 
+#include "codec.h"
 #include "cookies.h"
 #include "history.h"
 #include "restartprocess.h"
@@ -50,6 +51,12 @@ private slots:
     void restartReplacesARunningProcess();
     void restartStartsDirectlyWhenNothingIsRunning();
     void restartDoesNotWarnWhenItCanJustStart();
+    void codecConfigWordsAreRead();
+    void codecAutoFollowsTheDriverNotTheModel();
+    void codecOnlyDecodingEntrypointsCount();
+    void codecSelectorAlwaysKeepsAWayToPlay();
+    void codecCycleVisitsEveryChoiceAndReturns();
+    void codecWordingMatchesTheDecision();
 
 private:
     static QByteArray fixture(const QString &name)
@@ -462,6 +469,130 @@ void HurutubeTests::restartDoesNotWarnWhenItCanJustStart()
     QVERIFY(process.waitForFinished(5000));
     qInstallMessageHandler(nullptr);
     QCOMPARE(g_warnings.size(), 0);
+}
+
+void HurutubeTests::codecConfigWordsAreRead()
+{
+    // config.toml is read-only, so a word the app does not understand can never be
+    // corrected there -- and it must not be able to stop playback either.
+    QCOMPARE(Codec::fromConfig(QStringLiteral("auto")), Codec::Preference::Auto);
+    QCOMPARE(Codec::fromConfig(QStringLiteral("  AVC  ")), Codec::Preference::Avc);
+    QCOMPARE(Codec::fromConfig(QStringLiteral("h264")), Codec::Preference::Avc);
+    QCOMPARE(Codec::fromConfig(QStringLiteral("VP9")), Codec::Preference::Vp9);
+    QCOMPARE(Codec::fromConfig(QStringLiteral("av1")), Codec::Preference::Av1);
+    QCOMPARE(Codec::fromConfig(QString()), Codec::Preference::Auto);
+    QCOMPARE(Codec::fromConfig(QStringLiteral("avc1")), Codec::Preference::Auto);  // not a word we defined
+    QCOMPARE(Codec::fromConfig(QStringLiteral("hvec")), Codec::Preference::Auto);  // a misspelling
+    QCOMPARE(Codec::name(Codec::Preference::Auto), QStringLiteral("auto"));
+    QCOMPARE(Codec::name(Codec::Preference::Av1), QStringLiteral("av1"));
+}
+
+void HurutubeTests::codecAutoFollowsTheDriverNotTheModel()
+{
+    // The whole point of the feature: on a GPU that decodes H.264 and nothing newer,
+    // `auto` must ask for H.264 instead of quietly handing mpv an AV1 stream to
+    // decode on the CPU. Both fixtures are the driver's own answer -- one captured
+    // here (Iris Xe), one reconstructed for a Haswell machine.
+    const Codec::Capability haswell =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-haswell.txt"))));
+    QVERIFY(haswell.h264);
+    QVERIFY(!haswell.vp9);
+    QVERIFY(!haswell.av1);
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, haswell), Codec::Preference::Avc);
+
+    const Codec::Capability iris =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-iris-xe.txt"))));
+    QVERIFY(iris.h264);
+    QVERIFY(iris.vp9);
+    QVERIFY(iris.av1);
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, iris), Codec::Preference::Auto);
+
+    // No answer: restrict nothing, and do not pretend to know. This is the case the
+    // app deliberately refuses to fill in from a CPU model number.
+    const Codec::Capability unknown;
+    QVERIFY(!unknown.any());
+    QVERIFY(unknown.source.isEmpty());
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, unknown), Codec::Preference::Auto);
+
+    // An explicit preference is the user's word, including where this GPU cannot
+    // decode it in hardware -- overriding the app is allowed, being quiet about the
+    // cost is not (the footer says "software").
+    QCOMPARE(Codec::effective(Codec::Preference::Av1, haswell), Codec::Preference::Av1);
+    QCOMPARE(Codec::effective(Codec::Preference::Vp9, unknown), Codec::Preference::Vp9);
+}
+
+void HurutubeTests::codecOnlyDecodingEntrypointsCount()
+{
+    // Haswell advertises H.264 for encoding as well as decoding. Reading "I can
+    // encode this" as "I can decode this" would have the app claim a hardware path
+    // that is not there.
+    const Codec::Capability encodingOnly = Codec::fromVainfo(QStringLiteral(
+        "      VAProfileH264High               : VAEntrypointEncSlice\n"
+        "      VAProfileH264Main               : VAEntrypointEncSlice\n"
+        "      VAProfileH264High               : VAEntrypointFEI\n"
+        "      VAProfileVP9Profile0            : VAEntrypointEncSlice\n"));
+    QVERIFY(!encodingOnly.any());
+    QCOMPARE(Codec::effective(Codec::Preference::Auto, encodingOnly), Codec::Preference::Auto);
+}
+
+void HurutubeTests::codecSelectorAlwaysKeepsAWayToPlay()
+{
+    // A codec preference is a preference, never a demand: plenty of videos have no
+    // stream in the wanted codec, and one must still play. Every expression ends in
+    // the unfiltered fallback.
+    const QString fallback = QStringLiteral("bestvideo[height<=1080]+bestaudio/best[height<=1080]");
+    for (const Codec::Preference preference :
+         {Codec::Preference::Auto, Codec::Preference::Avc, Codec::Preference::Vp9,
+          Codec::Preference::Av1}) {
+        const QString expression = Codec::selector(preference, false);
+        QVERIFY2(expression.endsWith(fallback), qPrintable(expression));
+        QCOMPARE(Codec::selector(preference, true), QStringLiteral("bestaudio/best"));
+    }
+
+    // The filters themselves, verbatim as measured against a real video: the plain
+    // selection there resolves to av01 (399), H.264 to avc1.64002A (299) and VP9 to
+    // vp9 (303). The regex forms are deliberate: `^vp0?9` also covers the `vp09.*`
+    // spelling a future extraction may use.
+    QVERIFY(Codec::selector(Codec::Preference::Avc, false).contains(QStringLiteral("vcodec~=\"^avc\"")));
+    QVERIFY(Codec::selector(Codec::Preference::Vp9, false).contains(QStringLiteral("vcodec~=\"^vp0?9\"")));
+    QVERIFY(Codec::selector(Codec::Preference::Av1, false).contains(QStringLiteral("vcodec~=\"^av0?1\"")));
+    QVERIFY(!Codec::selector(Codec::Preference::Auto, false).contains(QStringLiteral("vcodec")));
+}
+
+void HurutubeTests::codecCycleVisitsEveryChoiceAndReturns()
+{
+    Codec::Preference preference = Codec::Preference::Auto;
+    QStringList seen;
+    for (int step = 0; step < 4; ++step) {
+        preference = Codec::next(preference);
+        seen << Codec::name(preference);
+    }
+    QCOMPARE(seen.join(QLatin1Char(' ')), QStringLiteral("avc vp9 av1 auto"));
+}
+
+void HurutubeTests::codecWordingMatchesTheDecision()
+{
+    const Codec::Capability haswell =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-haswell.txt"))));
+    const Codec::Capability iris =
+        Codec::fromVainfo(QString::fromUtf8(fixture(QStringLiteral("vainfo-iris-xe.txt"))));
+
+    // The footer, in a few words.
+    QCOMPARE(Codec::summary(Codec::Preference::Auto, haswell), QStringLiteral("auto → H.264"));
+    QCOMPARE(Codec::summary(Codec::Preference::Avc, iris), QStringLiteral("H.264"));
+    QCOMPARE(Codec::summary(Codec::Preference::Auto, iris), QStringLiteral("auto"));
+    QCOMPARE(Codec::summary(Codec::Preference::Auto, Codec::Capability{}), QStringLiteral("auto"));
+    // Forcing software is allowed, and said out loud rather than discovered as
+    // dropped frames.
+    QCOMPARE(Codec::summary(Codec::Preference::Av1, haswell), QStringLiteral("AV1 (software)"));
+
+    // --status, with the reason.
+    QVERIFY(Codec::describe(Codec::Preference::Auto, haswell).contains(QStringLiteral("CPU")));
+    QVERIFY(Codec::describe(Codec::Preference::Auto, haswell).contains(QStringLiteral("H.264")));
+    QVERIFY(Codec::describe(Codec::Preference::Auto, iris).contains(QStringLiteral("nothing to restrict")));
+    QVERIFY(Codec::describe(Codec::Preference::Avc, iris).contains(QStringLiteral("asked for")));
+    QVERIFY(Codec::describe(Codec::Preference::Av1, haswell).contains(QStringLiteral("decode on the CPU")));
+    QVERIFY(Codec::describe(Codec::Preference::Auto, Codec::Capability{}).contains(QStringLiteral("no answer")));
 }
 
 QTEST_GUILESS_MAIN(HurutubeTests)
