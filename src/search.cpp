@@ -1,5 +1,7 @@
 #include "search.h"
 
+#include "restartprocess.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -494,10 +496,6 @@ void Search::loadPlaylist(const QString &id)
 
 void Search::runYtDlp(const QString &url, const QString &heading)
 {
-    if (m_ytdlpProcess.state() != QProcess::NotRunning) {
-        m_ytdlpProcess.kill();
-        m_ytdlpProcess.waitForFinished(500);
-    }
     m_ytdlpOutput.clear();
     m_currentRequest = heading;
     setHeading(heading);
@@ -511,8 +509,12 @@ void Search::runYtDlp(const QString &url, const QString &heading)
     arguments += cookieArguments();
     arguments << url;
     emit busyChanged();
-    m_ytdlpProcess.start(m_ytdlp, arguments);
-    if (!m_ytdlpProcess.waitForStarted(3000)) {
+    Restart::process(m_ytdlpProcess, m_ytdlp, arguments, QStringLiteral("the yt-dlp listing"));
+    // Only wait when a start actually happened: a deferred one (the previous
+    // listing would not die) is not a failure, and waiting on it would report
+    // "could not start yt-dlp" for a listing that is about to run.
+    if (m_ytdlpProcess.state() != QProcess::NotRunning
+        && !m_ytdlpProcess.waitForStarted(3000)) {
         m_currentRequest.clear();
         emit busyChanged();
         fail(tr("could not start yt-dlp; is it installed?"));

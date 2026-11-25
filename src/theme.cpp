@@ -1,5 +1,7 @@
 #include "theme.h"
 
+#include "restartprocess.h"
+
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -130,11 +132,17 @@ void Theme::rearmWatcher()
 
 void Theme::refreshRounding()
 {
-    if (m_roundingProcess.state() != QProcess::NotRunning)
+    if (m_roundingProcess.state() != QProcess::NotRunning) {
+        qWarning().noquote() << "hurutube: hyprctl is still running; skipping this rounding poll";
         return;
+    }
     m_roundingProcess.start(m_hyprctl, {QStringLiteral("-j"), QStringLiteral("getoption"), QStringLiteral("decoration:rounding")});
     if (!m_roundingProcess.waitForFinished(1200)) {
         m_roundingProcess.kill();
+        // Wait for the kill to be reaped. Returning while the object still reads
+        // Running is wrong in two ways: the process is left behind, and the next
+        // poll is skipped by the guard above as if a poll were still in flight.
+        m_roundingProcess.waitForFinished(500);
         return;
     }
     const QJsonObject root = QJsonDocument::fromJson(m_roundingProcess.readAllStandardOutput()).object();

@@ -1,5 +1,7 @@
 #include "player.h"
 
+#include "restartprocess.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
@@ -136,7 +138,9 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
                     if (!m_cookieRetryTried && hasCookieSource()) {
                         m_cookieRetryTried = true;
                         m_resolving = url;
-                        m_resolve.start(QStringLiteral("yt-dlp"), resolveArguments(url, true));
+                        Restart::process(m_resolve, QStringLiteral("yt-dlp"),
+                                         resolveArguments(url, true),
+                                         QStringLiteral("the cookie retry"));
                         return;
                     }
                     emit resolved(url, false);
@@ -211,8 +215,14 @@ void Player::setCookieSource(const QString &cookiesFile, const QString &cookiesF
 
 void Player::startEngine()
 {
-    if (m_process.state() != QProcess::NotRunning)
+    if (m_process.state() != QProcess::NotRunning) {
+        // Named, because Qt's own "Process is already running" never says which
+        // process it means -- and one of the six occurrences in the session this
+        // was written for has never been accounted for.
+        qWarning().noquote() << "hurutube: the playback engine is still running (state"
+                             << int(m_process.state()) << "); not starting a second one";
         return;
+    }
 
     stopStaleEngines();
     QFile::remove(m_socketPath);
@@ -411,15 +421,15 @@ void Player::presolve(const QString &url)
         return;
     if (m_resolving == url && m_resolve.state() != QProcess::NotRunning)
         return;
-    if (m_resolve.state() != QProcess::NotRunning) {
-        m_resolve.kill();
-        m_resolve.waitForFinished(500);
-    }
     m_resolveOutput.clear();
     m_resolving = url;
-    // Anonymous first, always: see resolveArguments().
+    // Anonymous first, always: see resolveArguments(). The helper stops an
+    // in-flight resolve and -- if it cannot be reaped in time -- defers this start
+    // instead of dropping it, which would silently hand playback to mpv's own,
+    // much slower extraction.
     m_cookieRetryTried = false;
-    m_resolve.start(QStringLiteral("yt-dlp"), resolveArguments(url, false));
+    Restart::process(m_resolve, QStringLiteral("yt-dlp"), resolveArguments(url, false),
+                     QStringLiteral("the resolver"));
 }
 
 QStringList Player::resolveArguments(const QString &url, bool withCookies) const

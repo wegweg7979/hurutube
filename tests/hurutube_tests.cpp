@@ -12,7 +12,18 @@
 
 #include "cookies.h"
 #include "history.h"
+#include "restartprocess.h"
 #include "search.h"
+
+// Captures warnings so a test can assert that a fix is quiet when it should be.
+namespace {
+QStringList g_warnings;
+void captureWarnings(QtMsgType type, const QMessageLogContext &, const QString &message)
+{
+    if (type == QtWarningMsg)
+        g_warnings.append(message);
+}
+}  // namespace
 
 // Everything here is pure or file-local: the fixture payloads are real replies
 // captured from YouTube and yt-dlp, so the parsers are tested against the shape
@@ -36,6 +47,9 @@ private slots:
     void cookiesLadderHonoursExplicitConfig();
     void cookiesLadderDoesNotLetAVisitorFileShadowFirefox();
     void cookiesLadderInheritsAndEndsEmpty();
+    void restartReplacesARunningProcess();
+    void restartStartsDirectlyWhenNothingIsRunning();
+    void restartDoesNotWarnWhenItCanJustStart();
 
 private:
     static QByteArray fixture(const QString &name)
@@ -405,6 +419,49 @@ void HurutubeTests::cookiesLadderInheritsAndEndsEmpty()
     kind = QStringLiteral("stale");
     QVERIFY(Cookies::resolve(&kind, bare.path()).isEmpty());
     QVERIFY(kind.isEmpty());
+}
+
+void HurutubeTests::restartReplacesARunningProcess()
+{
+    // The case presolve hits when you move through the list quickly: a resolve is
+    // still running and must be replaced. Qt's own start() does nothing here --
+    // it warns and drops the request -- so the helper stops the old one first.
+    QProcess process;
+    process.start(QStringLiteral("/usr/bin/sleep"), {QStringLiteral("30")});
+    QVERIFY(process.waitForStarted(5000));
+    QCOMPARE(process.state(), QProcess::Running);
+
+    Restart::process(process, QStringLiteral("/usr/bin/echo"), {QStringLiteral("replacement")},
+                     QStringLiteral("the test"));
+    QTRY_COMPARE(process.state(), QProcess::Running);
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 0);
+    QVERIFY(QString::fromUtf8(process.readAllStandardOutput()).contains(QStringLiteral("replacement")));
+}
+
+void HurutubeTests::restartStartsDirectlyWhenNothingIsRunning()
+{
+    QProcess process;
+    Restart::process(process, QStringLiteral("/usr/bin/echo"), {QStringLiteral("direct")},
+                     QStringLiteral("the test"));
+    QTRY_COMPARE(process.state(), QProcess::Running);
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 0);
+    QVERIFY(QString::fromUtf8(process.readAllStandardOutput()).contains(QStringLiteral("direct")));
+}
+
+void HurutubeTests::restartDoesNotWarnWhenItCanJustStart()
+{
+    // A recovery path that cries wolf is worse than Qt's own message, so the
+    // ordinary case must be silent.
+    g_warnings.clear();
+    qInstallMessageHandler(captureWarnings);
+    QProcess process;
+    Restart::process(process, QStringLiteral("/usr/bin/echo"), {QStringLiteral("quiet")},
+                     QStringLiteral("the test"));
+    QVERIFY(process.waitForFinished(5000));
+    qInstallMessageHandler(nullptr);
+    QCOMPARE(g_warnings.size(), 0);
 }
 
 QTEST_GUILESS_MAIN(HurutubeTests)
