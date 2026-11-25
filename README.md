@@ -3,7 +3,6 @@
 A small YouTube player: search, watch, and no Shorts. The video plays in mpv with
 GPU decode (VA-API).
 
-![hurutube's results list](docs/screenshot.png)
 
 ## Running it
 
