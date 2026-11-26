@@ -101,11 +101,19 @@ ApplicationWindow {
             list.currentIndex = index
     }
 
-    // The row's own URL, so the next one can be resolved while this one plays.
+    // The row being looked at, and the two after it, resolved one at a time. Most
+    // plays then reach the direct-URL path (~1 s) instead of paying 7-31 s for a
+    // fresh resolve -- and because they never overlap, no resolve is slowed down by
+    // another (three at once measured at 73 s each, against 8 s alone).
     function presolveCurrent() {
-        const row = window.rowAt(list.currentIndex)
-        if (row)
-            player.presolve(row.url)
+        const urls = []
+        for (let i = list.currentIndex; i < Math.min(results.count, list.currentIndex + 3); ++i) {
+            const row = window.rowAt(i)
+            if (row)
+                urls.push(row.url)
+        }
+        if (urls.length > 0)
+            player.presolveSoon(urls)
     }
 
     function playNext(step) {
@@ -252,6 +260,16 @@ ApplicationWindow {
                 color: theme.muted
                 font.pixelSize: 12
                 elide: Text.ElideRight
+            }
+
+            // A play waiting for its own resolve. Said out loud, because a wait the
+            // user can see is a different thing from a hang.
+            Text {
+                visible: player.resolving
+                text: qsTr("resolving…")
+                color: theme.yellow
+                font.pixelSize: 12
+                Layout.alignment: Qt.AlignVCenter
             }
 
             // What codec will be asked for -- "auto" unless this machine's VA-API

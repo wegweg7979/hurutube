@@ -9,6 +9,7 @@
 #include <QTimer>
 
 #include "codec.h"
+#include "resolves.h"
 
 // Video playback, driven through mpv's JSON IPC socket.
 //
@@ -55,6 +56,9 @@ class Player : public QObject {
     Q_PROPERTY(QString codecStatus READ codecStatus NOTIFY codecChanged)
     // The same thing in a few words, for the footer.
     Q_PROPERTY(QString codecSummary READ codecSummary NOTIFY codecChanged)
+    // True while a play is WAITING for its own resolve. The footer says so: a wait
+    // the user can see is not the same as a hang.
+    Q_PROPERTY(bool resolving READ resolving NOTIFY resolvingChanged)
 
 public:
     explicit Player(QObject *parent = nullptr, const QString &mpvBinary = {},
@@ -112,8 +116,13 @@ public:
     Q_INVOKABLE void play(const QString &url, double startSeconds, const QString &title);
     // Resolve in the background so the slow half overlaps the browsing. Safe to
     // call on every selection change: an in-flight resolve for another URL is
-    // abandoned.
+    // abandoned -- unless a play is waiting on it.
     Q_INVOKABLE void presolve(const QString &url);
+    // The same, for the rows the user is about to move to: they are resolved one
+    // at a time, in order, because extractions that overlap are ~9x slower each
+    // (measured: 8 s alone, 73 s with three running).
+    Q_INVOKABLE void presolveSoon(const QStringList &urls);
+    bool resolving() const { return m_awaitingPlay; }
     // Forget a cached resolve (the row is gone, or playback of it failed).
     Q_INVOKABLE void forget(const QString &url);
 
@@ -138,6 +147,7 @@ signals:
     void usedCookiesChanged();
     void audioOnlyChanged();
     void codecChanged();
+    void resolvingChanged();
     // Playback of the current entry ran to its end (reason=eof), which is what
     // advances the list.
     void finished();
@@ -150,15 +160,6 @@ signals:
     void resolved(const QString &url, bool ok);
 
 private:
-    struct Resolved {
-        QString video;
-        QString audio;
-        qint64 stamp = 0;
-        // Whether the cookies were needed to get this URL. Cached with the URL
-        // because it belongs to the resolve, not to the moment of playback.
-        bool cookies = false;
-    };
-
     void startEngine();
     // Terminate a *running* engine and start a fresh one with the new command line.
     // The wait is not cosmetic: if mpv has not finished dying inside it,
@@ -179,6 +180,15 @@ private:
     void stopStaleEngines();
     QString formatSelector() const;
     void replayWithoutCache(const QString &url, double start, const QString &title);
+    // The one place a resolve is started, so play() and presolve() cannot drift.
+    void startResolve(const QString &url, bool withCookies);
+    // Load a resolved entry straight into the engine: the ~1 s path.
+    void playResolved(const Resolves::Entry &entry);
+    // Resolve the next queued row, unless a play is waiting for its own.
+    void resolveNextInQueue();
+    // Give up on our own resolve and let mpv extract it instead. Kills the
+    // resolve FIRST, so this never becomes the two-extractions case it fixes.
+    void fallBackToMpv();
 
     // yt-dlp's arguments for ONE resolve attempt. Anonymous goes first and the
     // cookies are a fallback, never the default: a signed-in session is what
@@ -213,7 +223,21 @@ private:
     QProcess m_resolve;
     QByteArray m_resolveOutput;
     QString m_resolving;
-    QHash<QString, Resolved> m_cache;
+    // Direct URLs, now kept across runs: a fresh entry turns a 7-31 s resolve into
+    // a 1 s start, and history replays are the common case (resolves.cpp).
+    Resolves m_cache;
+    // A play that is waiting for the resolve of its own URL. This is what stops
+    // the app extracting the same video twice at once (measured: 23.5 s against
+    // 7 s for one extraction): mpv is only handed the plain URL if our own
+    // resolve FAILS, and then only after it has been killed.
+    struct PendingPlay {
+        QString url;
+    } m_pendingPlay;
+    bool m_awaitingPlay = false;
+    // Rows to resolve after the current one, one at a time and in order.
+    QStringList m_presolveQueue;
+    // Safety net: a resolve that never returns must not hang playback forever.
+    QTimer m_playTimeout;
     // The entry currently loaded, so a failed direct URL can be retried the slow
     // way exactly once.
     QString m_currentUrl;

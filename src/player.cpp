@@ -32,10 +32,10 @@ enum PropertyId {
     IdVideoFormat = 9,
 };
 
-// A pre-resolved URL is good for hours, but the safe assumption is minutes:
-// googlevideo ties it to the client IP and a timestamp, and a long video watched
-// from a laptop that changed networks would otherwise fail on resume.
-constexpr qint64 kResolveTtlSeconds = 90 * 60;
+// A resolve that never returns must not hang playback forever. Generous on
+// purpose: the slowest resolve measured here was 31 s, and timing out early would
+// start mpv's own extraction -- the second extraction this design avoids.
+constexpr int kPlayResolveTimeoutMs = 60000;
 
 }  // namespace
 
@@ -107,6 +107,11 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
     // restricts nothing and says so, rather than inferring a generation.
     m_capability = Codec::probe();
 
+    // A play waiting on a resolve that never lands falls back to mpv's own
+    // extraction -- after killing ours, so there is never more than one.
+    m_playTimeout.setSingleShot(true);
+    connect(&m_playTimeout, &QTimer::timeout, this, &Player::fallBackToMpv);
+
     m_reconnect.setSingleShot(true);
     connect(&m_reconnect, &QTimer::timeout, this, &Player::connectSocket);
 
@@ -148,10 +153,16 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
                                          QStringLiteral("the cookie retry"));
                         return;
                     }
+                    // Our own resolve failed. Hand it to mpv -- but only after
+                    // killing ours, or this becomes the two-extractions case the
+                    // whole design exists to avoid.
+                    if (m_awaitingPlay && m_pendingPlay.url == url)
+                        fallBackToMpv();
                     emit resolved(url, false);
+                    resolveNextInQueue();
                     return;
                 }
-                Resolved entry;
+                Resolves::Entry entry;
                 entry.video = lines.first().trimmed();
                 // A combined selector prints one URL: the video stream carries
                 // its own audio, so there is nothing to attach.
@@ -159,11 +170,25 @@ Player::Player(QObject *parent, const QString &mpvBinary, const QString &socketP
                 entry.stamp = QDateTime::currentSecsSinceEpoch();
                 entry.cookies = m_cookieRetryTried;
                 if (entry.video.isEmpty()) {
+                    if (m_awaitingPlay && m_pendingPlay.url == url)
+                        fallBackToMpv();
                     emit resolved(url, false);
+                    resolveNextInQueue();
                     return;
                 }
                 m_cache.insert(url, entry);
+                if (m_awaitingPlay && m_pendingPlay.url == url) {
+                    // The row the user is waiting for is ready: start it from the
+                    // direct URL now. This is the ~1 s path, and the reason the
+                    // app never lets mpv extract the same video alongside us.
+                    m_playTimeout.stop();
+                    m_awaitingPlay = false;
+                    m_pendingPlay = {};
+                    emit resolvingChanged();
+                    playResolved(entry);
+                }
                 emit resolved(url, true);
+                resolveNextInQueue();
             });
 }
 
@@ -462,20 +487,66 @@ void Player::presolve(const QString &url)
 {
     if (url.isEmpty() || url.contains(QStringLiteral("googlevideo")))
         return;
-    const auto cached = m_cache.constFind(url);
-    if (cached != m_cache.constEnd()
-        && QDateTime::currentSecsSinceEpoch() - cached->stamp < kResolveTtlSeconds)
+    if (m_cache.fresh(url))
         return;
     if (m_resolving == url && m_resolve.state() != QProcess::NotRunning)
         return;
+    // A play waiting on its OWN resolve outranks browsing: preempting it would
+    // make the user wait for a row they did not choose, and the row they did
+    // choose would pay for a second extraction.
+    if (m_awaitingPlay && m_resolving == m_pendingPlay.url
+        && m_resolve.state() != QProcess::NotRunning)
+        return;
+    startResolve(url, false);
+}
+
+void Player::presolveSoon(const QStringList &urls)
+{
+    m_presolveQueue.clear();
+    for (const QString &url : urls) {
+        if (url.isEmpty() || url.contains(QStringLiteral("googlevideo")))
+            continue;
+        m_presolveQueue.removeAll(url);
+        if (m_cache.fresh(url))
+            continue;
+        m_presolveQueue.append(url);
+    }
+    // The first row is the one being looked at: start it now, and let the others
+    // follow one at a time. Never in parallel -- extractions that overlap are
+    // about 9x slower each (measured: 8 s alone, 73 s with three running).
+    if (m_presolveQueue.isEmpty())
+        return;
+    const QString first = m_presolveQueue.takeFirst();
+    presolve(first);
+    if (m_resolving != first)
+        m_presolveQueue.prepend(first);  // declined: a play is waiting on its own
+}
+
+void Player::resolveNextInQueue()
+{
+    // Never while a play is waiting: that resolve is the one that matters.
+    if (m_awaitingPlay && m_resolve.state() != QProcess::NotRunning)
+        return;
+    while (!m_presolveQueue.isEmpty()) {
+        const QString url = m_presolveQueue.takeFirst();
+        if (m_cache.fresh(url) || url == m_resolving)
+            continue;
+        startResolve(url, false);
+        return;
+    }
+}
+
+// The one place a resolve is started. The helper stops an in-flight resolve and --
+// if it cannot be reaped in time -- defers this start instead of dropping it,
+// which would silently hand playback to mpv's own, much slower extraction.
+void Player::startResolve(const QString &url, bool withCookies)
+{
     m_resolveOutput.clear();
     m_resolving = url;
-    // Anonymous first, always: see resolveArguments(). The helper stops an
-    // in-flight resolve and -- if it cannot be reaped in time -- defers this start
-    // instead of dropping it, which would silently hand playback to mpv's own,
-    // much slower extraction.
-    m_cookieRetryTried = false;
-    Restart::process(m_resolve, QStringLiteral("yt-dlp"), resolveArguments(url, false),
+    // Anonymous first, always: see resolveArguments(). Cookies are the fallback,
+    // and this flag is what stops the fallback from retrying itself.
+    m_cookieRetryTried = withCookies;
+    Restart::process(m_resolve, QStringLiteral("yt-dlp"), resolveArguments(url, withCookies),
                      QStringLiteral("the resolver"));
 }
 
@@ -503,7 +574,7 @@ void Player::setUsedCookies(bool used)
 
 void Player::forget(const QString &url)
 {
-    m_cache.remove(url);
+    m_cache.forget(url);
 }
 
 void Player::play(const QString &url, double startSeconds, const QString &title)
@@ -521,32 +592,76 @@ void Player::play(const QString &url, double startSeconds, const QString &title)
     emit durationChanged();
     emit mediaTitleChanged();
 
+    Resolves::Entry entry;
+    if (m_cache.fresh(url, &entry)) {
+        setUsedCookies(entry.cookies);
+        playResolved(entry);
+        return;
+    }
+
+    // No fresh direct URL. Resolve it OURSELVES and wait, rather than handing mpv
+    // the plain URL: mpv would then extract the same video while our own resolve
+    // for this row is still in flight, and two extractions of one video throttle
+    // each other. Measured: our resolve alone 7.0 s, mpv's alone 13.4 s, the two
+    // together 23.5 s -- and 73 s each with three in flight. One at a time.
+    m_pendingPlay = {url};
+    if (!m_awaitingPlay) {
+        m_awaitingPlay = true;
+        emit resolvingChanged();
+    }
+    m_playTimeout.start(kPlayResolveTimeoutMs);
+    if (m_resolving == url && m_resolve.state() != QProcess::NotRunning)
+        return;            // already on its way: just wait for it
+    startResolve(url, false);   // otherwise this row wins the race
+}
+
+// Load a resolved entry straight into the engine: the ~1 s path. m_currentUrl,
+// m_currentStart and m_currentTitle belong to the play this was resolved for, and
+// are still current when it lands -- play() sets them on every call, so a late
+// resolve for a row the user has moved away from cannot start the wrong video.
+void Player::playResolved(const Resolves::Entry &entry)
+{
     QJsonObject options;
-    if (!title.isEmpty())
-        options.insert(QStringLiteral("force-media-title"), title);
+    if (!m_currentTitle.isEmpty())
+        options.insert(QStringLiteral("force-media-title"), m_currentTitle);
     // The value has to be a STRING: mpv's per-file options object rejects a JSON
     // number for a time-valued option with `invalid parameter` (measured against
     // mpv 0.41: {"start":40} fails, {"start":"40"} works), and the whole loadfile
     // then does nothing at all.
     if (m_currentStart > 0)
         options.insert(QStringLiteral("start"), QString::number(m_currentStart, 'f', 3));
-
-    const auto cached = m_cache.constFind(url);
-    const bool usable = cached != m_cache.constEnd()
-                        && QDateTime::currentSecsSinceEpoch() - cached->stamp < kResolveTtlSeconds;
-    QString target = url;
-    if (usable) {
-        target = cached->video;
-        if (!cached->audio.isEmpty())
-            options.insert(QStringLiteral("audio-file"), cached->audio);
-    }
+    if (!entry.audio.isEmpty())
+        options.insert(QStringLiteral("audio-file"), entry.audio);
     // From what actually happened, not from what is configured.
-    setUsedCookies(usable && cached->cookies);
+    setUsedCookies(entry.cookies);
     m_mediaTitle = m_currentTitle;
     // `replace` so the new entry starts immediately instead of being appended to
     // an idle playlist; the app's own list is the source of order.
-    send({QStringLiteral("loadfile"), target, QStringLiteral("replace"), -1, options});
+    send({QStringLiteral("loadfile"), entry.video, QStringLiteral("replace"), -1, options});
     send({QStringLiteral("set_property"), QStringLiteral("pause"), false});
+}
+
+// The last resort: let mpv extract the URL itself. It is not faster than our own
+// resolve (13.4 s against 7-13 s), so it happens only when ours has failed or run
+// out of time -- and the resolve is killed FIRST, because the point of all this is
+// that two extractions never run together.
+void Player::fallBackToMpv()
+{
+    if (m_resolve.state() != QProcess::NotRunning) {
+        m_resolve.kill();
+        m_resolve.waitForFinished(2000);
+    }
+    m_resolving.clear();
+    m_playTimeout.stop();
+    const bool wasAwaiting = m_awaitingPlay;
+    const QString url = m_pendingPlay.url;
+    m_awaitingPlay = false;
+    m_pendingPlay = {};
+    if (wasAwaiting)
+        emit resolvingChanged();
+    if (!url.isEmpty())
+        replayWithoutCache(url, m_currentStart, m_currentTitle);
+    resolveNextInQueue();
 }
 
 void Player::replayWithoutCache(const QString &url, double start, const QString &title)
@@ -583,6 +698,14 @@ void Player::resume()
 
 void Player::stop()
 {
+    // A play still waiting for its resolve must not begin after the user stopped:
+    // the resolve would otherwise land a moment later and start playing on its own.
+    m_playTimeout.stop();
+    if (m_awaitingPlay) {
+        m_awaitingPlay = false;
+        m_pendingPlay = {};
+        emit resolvingChanged();
+    }
     send({QStringLiteral("stop")});
     m_position = 0;
     m_playing = false;

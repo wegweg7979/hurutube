@@ -14,6 +14,7 @@
 #include "cookies.h"
 #include "history.h"
 #include "restartprocess.h"
+#include "resolves.h"
 #include "search.h"
 
 // Captures warnings so a test can assert that a fix is quiet when it should be.
@@ -58,6 +59,10 @@ private slots:
     void codecCycleVisitsEveryChoiceAndReturns();
     void codecWordingMatchesTheDecision();
     void codecLegacyIntelDriverPrefersH264();
+    void resolvesKeepFreshEntriesAcrossRuns();
+    void resolvesDropExpiredEntriesOnLoad();
+    void resolvesIgnoreACorruptFile();
+    void resolvesCapWhatTheyKeepAndForgetOnDemand();
 
 private:
     static QByteArray fixture(const QString &name)
@@ -648,6 +653,115 @@ void HurutubeTests::codecLegacyIntelDriverPrefersH264()
     const QString canyonWhy = Codec::describe(Codec::Preference::Auto, canyon);
     QVERIFY(canyonWhy.contains(QStringLiteral("H.264 only")));
     QVERIFY(!canyonWhy.contains(QStringLiteral("partly")));
+}
+
+void HurutubeTests::resolvesKeepFreshEntriesAcrossRuns()
+{
+    // The point of the file: a resolve costs 7-31 s and playing a resolved URL
+    // costs about 1 s, so the cache has to outlive the process. This is what makes
+    // a replay from history -- or the first click after a restart -- instant.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("resolves.json"));
+    const QString url = QStringLiteral("https://www.youtube.com/watch?v=aqz-KE-bpKQ");
+
+    {
+        Resolves cache(path);
+        Resolves::Entry entry;
+        entry.video = QStringLiteral("https://rr1---sn-x.googlevideo.com/videoplayback?itag=137");
+        entry.audio = QStringLiteral("https://rr1---sn-x.googlevideo.com/videoplayback?itag=251");
+        entry.stamp = QDateTime::currentSecsSinceEpoch();
+        cache.insert(url, entry);
+        QCOMPARE(cache.count(), 1);
+    }
+
+    Resolves reopened(path);
+    Resolves::Entry out;
+    QVERIFY(reopened.fresh(url, &out));
+    QCOMPARE(out.video,
+             QStringLiteral("https://rr1---sn-x.googlevideo.com/videoplayback?itag=137"));
+    QVERIFY(out.audio.endsWith(QStringLiteral("itag=251")));
+    QVERIFY(!out.cookies);
+    // A URL nobody resolved is not invented.
+    QVERIFY(!reopened.fresh(QStringLiteral("https://www.youtube.com/watch?v=none")));
+
+    // An entry with no video URL is not worth keeping: fresh() must not claim it.
+    Resolves::Entry empty;
+    empty.stamp = QDateTime::currentSecsSinceEpoch();
+    reopened.insert(QStringLiteral("https://www.youtube.com/watch?v=empty"), empty);
+    QVERIFY(!reopened.fresh(QStringLiteral("https://www.youtube.com/watch?v=empty")));
+}
+
+void HurutubeTests::resolvesDropExpiredEntriesOnLoad()
+{
+    // The file outlives the URLs in it: googlevideo ties them to the client address
+    // and a timestamp, so an old one is worse than none -- it fails mid-play.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("resolves.json"));
+    const qint64 stale = QDateTime::currentSecsSinceEpoch() - Resolves::kTtlSeconds - 60;
+    const qint64 fresh = QDateTime::currentSecsSinceEpoch();
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QStringLiteral(R"({"https://www.youtube.com/watch?v=a":{"video":"https://gv/v","stamp":%1},)")
+                   .arg(stale).toUtf8());
+    file.write(QStringLiteral(R"("https://www.youtube.com/watch?v=b":{"video":"https://gv/w","stamp":%2}})")
+                   .arg(fresh).toUtf8());
+    file.close();
+
+    Resolves cache(path);
+    QCOMPARE(cache.count(), 1);
+    QVERIFY(!cache.fresh(QStringLiteral("https://www.youtube.com/watch?v=a")));
+    QVERIFY(cache.fresh(QStringLiteral("https://www.youtube.com/watch?v=b")));
+}
+
+void HurutubeTests::resolvesIgnoreACorruptFile()
+{
+    // A truncated or half-written file must cost one resolve, not a crash.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("resolves.json"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{ this is not json");
+    file.close();
+
+    Resolves cache(path);
+    QCOMPARE(cache.count(), 0);
+    QVERIFY(!cache.fresh(QStringLiteral("https://www.youtube.com/watch?v=a")));
+
+    // And it is still usable afterwards, replacing the damaged file.
+    Resolves::Entry entry;
+    entry.video = QStringLiteral("https://gv/v");
+    entry.stamp = QDateTime::currentSecsSinceEpoch();
+    cache.insert(QStringLiteral("https://www.youtube.com/watch?v=a"), entry);
+    Resolves reopened(path);
+    QVERIFY(reopened.fresh(QStringLiteral("https://www.youtube.com/watch?v=a")));
+}
+
+void HurutubeTests::resolvesCapWhatTheyKeepAndForgetOnDemand()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("resolves.json"));
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    Resolves cache(path);
+    for (int i = 0; i < Resolves::kMaxEntries + 5; ++i) {
+        Resolves::Entry entry;
+        entry.video = QStringLiteral("https://gv/%1").arg(i);
+        entry.stamp = now + i;  // ascending, so newest-versus-oldest is provable
+        cache.insert(QStringLiteral("https://www.youtube.com/watch?v=%1").arg(i), entry);
+    }
+
+    Resolves reopened(path);
+    QCOMPARE(reopened.count(), Resolves::kMaxEntries);
+    // The cap keeps the NEWEST and drops the oldest, like history's.
+    QVERIFY(reopened.fresh(QStringLiteral("https://www.youtube.com/watch?v=%1")
+                               .arg(Resolves::kMaxEntries + 4)));
+    QVERIFY(!reopened.fresh(QStringLiteral("https://www.youtube.com/watch?v=0")));
+
+    // forget() drops it from memory AND from the file.
+    reopened.forget(QStringLiteral("https://www.youtube.com/watch?v=%1")
+                        .arg(Resolves::kMaxEntries + 4));
+    Resolves again(path);
+    QVERIFY(!again.fresh(QStringLiteral("https://www.youtube.com/watch?v=%1")
+                             .arg(Resolves::kMaxEntries + 4)));
 }
 
 QTEST_GUILESS_MAIN(HurutubeTests)
