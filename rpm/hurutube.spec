@@ -13,7 +13,7 @@
 %global debug_package %{nil}
 
 Name:           hurutube
-Version:        0.1.5
+Version:        0.1.6
 Release:        1%{?dist}
 Summary:        A small YouTube player: search, watch, and no Shorts
 
@@ -94,6 +94,20 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
+* Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.6-1
+- Loading no longer depends on the app racing itself. With no cached direct URL,
+  playing handed mpv the plain YouTube URL while our own background resolve for the
+  same row was still running: two full extractions of one video, throttling each
+  other. Measured in the app: 60.9 s to a first picture with three yt-dlp processes
+  alive at once; now 8.8 s with one extraction, and 1.1 s when the URL is cached.
+- Resolved direct URLs are kept in ~/.local/state/hurutube/resolves.json
+  (90-minute TTL, capped at 200, written atomically, cleared when the codec
+  preference changes because those URLs belong to a codec), so a replay -- or the
+  first play after a restart -- skips the resolve entirely.
+- The row being viewed and the next two are resolved in the background, one at a
+  time: three concurrent extractions measured 73 s each against 8 s alone.
+- The footer reports "resolving..." while a play waits for its resolve, and
+  stopping playback cancels a pending play rather than letting it start late.
 * Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.5-1
 - The help screen carries the wordmark, compiled into the binary as a resource
   rather than read from a file beside it, so it cannot go missing in packaging.
