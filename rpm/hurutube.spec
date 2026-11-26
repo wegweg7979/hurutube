@@ -13,7 +13,7 @@
 %global debug_package %{nil}
 
 Name:           hurutube
-Version:        0.1.4
+Version:        0.1.5
 Release:        1%{?dist}
 Summary:        A small YouTube player: search, watch, and no Shorts
 
@@ -94,6 +94,18 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hurutube.desktop
 %{_datadir}/applications/hurutube.desktop
 
 %changelog
+* Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.5-1
+- The help screen carries the wordmark, compiled into the binary as a resource
+  rather than read from a file beside it, so it cannot go missing in packaging.
+- `auto` no longer takes the legacy Intel driver (i965) at its word: that driver
+  serves pre-Skylake parts where an advertised VP9 decode is hybrid -- part of the
+  work stays on the CPU -- so fully hardware H.264 is chosen instead. The two
+  reasons are stated separately in --status and the footer: "only partly
+  accelerated" when the newer codec is advertised, "decodes H.264 only" when it is
+  not. Driver-derived, never a CPU-model table; iHD (Skylake and later) is
+  untouched.
+- Verified against real payloads: a capture from a Devil's Canyon (i5-4690K, i965,
+  no VP9/AV1 advertised at all) and a constructed i965-with-VP9 one. 27 tests.
 * Wed Nov 25 2026 wegweg7979 <diode-crumble-0h@icloud.com> - 0.1.4-1
 - Ask for a codec this machine can actually decode. `codec = auto|avc|vp9|av1` in
   config.toml, and V cycles it for the session. `auto` is decided from VA-API's own
