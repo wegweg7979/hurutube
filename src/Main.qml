@@ -32,6 +32,25 @@ ApplicationWindow {
     property bool helpOpen: false
     property bool historyOpen: false
 
+    // A rotating bit of flavour text in the header, the way Omarchy's shell
+    // panels idle on theirs ("Herding headsets"). Pure dressing, no function.
+    property int phraseIndex: 0
+    readonly property var phrases: [
+        qsTr("Fetching clips"),
+        qsTr("Resolving streams"),
+        qsTr("Summoning pixels"),
+        qsTr("Herding codecs"),
+        qsTr("Decoding frames"),
+        qsTr("Queueing bangers"),
+        qsTr("Poking the algorithm"),
+        qsTr("Skipping Shorts"),
+        qsTr("Rolling the tape"),
+        qsTr("Buffering vibes"),
+        qsTr("Wrangling playlists"),
+        qsTr("Consulting the tapes")
+    ]
+    readonly property string phraseText: window.phrases[window.phraseIndex % window.phrases.length]
+
     ListModel { id: results }
 
     function formatTime(seconds) {
@@ -151,6 +170,36 @@ ApplicationWindow {
         }
     }
 
+    // The flavour line crossfades on Omarchy's own pattern: fade out, swap the
+    // string, fade back in.
+    Timer {
+        interval: 4200
+        repeat: true
+        running: window.visible
+        onTriggered: phraseSwap.restart()
+    }
+
+    SequentialAnimation {
+        id: phraseSwap
+        PropertyAnimation {
+            target: phraseLabel
+            property: "opacity"
+            to: 0.0
+            duration: 150
+            easing.type: Easing.OutCubic
+        }
+        ScriptAction {
+            script: window.phraseIndex = (window.phraseIndex + 1) % window.phrases.length
+        }
+        PropertyAnimation {
+            target: phraseLabel
+            property: "opacity"
+            to: 1.0
+            duration: 200
+            easing.type: Easing.OutCubic
+        }
+    }
+
     onClosing: {
         if (window.current && player.duration > 0)
             history.setPosition(window.current.id, player.position, player.duration)
@@ -228,6 +277,17 @@ ApplicationWindow {
                     selectByMouse: true
                     font.pixelSize: 14
                     onAccepted: window.runSearch(text)
+                }
+
+                // Idle flavour, dimmed so it reads as dressing rather than status.
+                Text {
+                    id: phraseLabel
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.maximumWidth: Math.round(window.width * 0.34)
+                    text: window.phraseText
+                    color: theme.muted
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
                 }
 
                 Text {
